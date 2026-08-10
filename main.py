@@ -45,8 +45,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     await manager.connect(websocket, room_id)
 
     # send this room's recent history to the newly connected client only
-    for row in database.get_recent_messages(room_id):
-        await websocket.send_text(f"{row['username']}: {row['content']}")
+    history = database.get_recent_messages(room_id)
+    if history:
+        await websocket.send_text("--- Messages you have missed ---")
+        for row in history:
+            await websocket.send_text(f"{row['username']}: {row['content']}")
 
     await manager.broadcast(f"{username} joined the room", room_id)
     try:
