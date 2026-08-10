@@ -8,6 +8,10 @@ DB_PATH = Path(os.environ.get("CHAT_DB_PATH", Path(__file__).parent / "chat.db")
 
 
 def init_db():
+    # NOTE: CREATE TABLE IF NOT EXISTS won't retroactively add new columns to
+    # an existing local chat.db from before Google OAuth was added - delete
+    # your local chat.db if you hit a "no such column: google_id" error.
+    # No migration system for a project at this scale.
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """
@@ -24,7 +28,8 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
-            hashed_password TEXT NOT NULL
+            hashed_password TEXT,
+            google_id TEXT UNIQUE
         )
         """
     )
@@ -48,12 +53,39 @@ def create_user(username: str, hashed_password: str) -> bool:
         conn.close()
 
 
+def create_google_user(username: str, google_id: str) -> bool:
+    """Returns False if the username is already taken (e.g. by a password account)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO users (username, hashed_password, google_id) VALUES (?, NULL, ?)",
+            (username, google_id),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
 def get_user(username: str) -> sqlite3.Row | None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT username, hashed_password FROM users WHERE username = ?",
+        "SELECT username, hashed_password, google_id FROM users WHERE username = ?",
         (username,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_user_by_google_id(google_id: str) -> sqlite3.Row | None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT username, hashed_password, google_id FROM users WHERE google_id = ?",
+        (google_id,),
     ).fetchone()
     conn.close()
     return row

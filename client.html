@@ -338,6 +338,7 @@
                     <button class="secondary" onclick="login()">Log In</button>
                 </div>
                 <p id="authStatus" class="status">Not logged in.</p>
+                <p class="status"><a href="/auth/google/login">Sign in with Google</a></p>
             </div>
 
             <!-- View 2: Join a Room -->
@@ -563,8 +564,23 @@
             if (e.key === "Enter") sendMessage();
         });
 
+        function checkForOAuthToken() {
+            // Google OAuth redirects back here as /client.html?token=... -
+            // pick that up automatically instead of making the user log in twice
+            const params = new URLSearchParams(window.location.search);
+            const oauthToken = params.get("token");
+            if (oauthToken) {
+                token = oauthToken;
+                // remove the token from the URL bar so it isn't left sitting
+                // in browser history / visible on screen
+                window.history.replaceState({}, "", window.location.pathname);
+                return true;
+            }
+            return false;
+        }
+
         setStatus("available"); // initialize picker UI (doesn't send until connected)
-        showView("auth");
+        showView(checkForOAuthToken() ? "room" : "auth");
     </script>
 </body>
 </html>

@@ -27,7 +27,7 @@ Server runs at `http://localhost:8000`.
 
 ## Try it
 
-Open `client.html` directly in your browser (or serve it). Register/log in, enter a room name and connect from two tabs using the **same room**, and chat between them. Tabs using a *different* room won't see those messages.
+Open [http://localhost:8000/client.html](http://localhost:8000/client.html) (the server now serves it directly - required for Google OAuth's redirect to work; opening the file directly still works fine for username/password login). Register/log in, enter a room name and connect from two tabs using the **same room**, and chat between them. Tabs using a *different* room won't see those messages.
 
 ## Auth
 
@@ -51,6 +51,35 @@ longer just claim to be anyone by typing a name in the URL.
 Passwords must be 8-72 characters (72 is bcrypt's hard limit). `/register` and
 `/login` are rate-limited (5/min and 10/min per IP by default) against
 brute-force/spam registration.
+
+### Google OAuth ("Sign in with Google")
+
+Optional - the app works fine without it (the button just returns a clear
+error instead of crashing). To enable it:
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
+   create a new project (or pick an existing one).
+2. Under **APIs & Services > OAuth consent screen**, configure the consent
+   screen (choose "External", fill in the required app name/support email -
+   for local testing you can leave it in "Testing" publishing status and add
+   your own Google account as a test user).
+3. Under **APIs & Services > Credentials**, click **Create Credentials >
+   OAuth client ID**, choose **Web application**.
+4. Add this exact **Authorized redirect URI**:
+   ```
+   http://localhost:8000/auth/google/callback
+   ```
+   (must match exactly, including the path - Google rejects mismatches)
+5. Save, then copy the generated **Client ID** and **Client Secret** into
+   your local `.env` file as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+6. Restart the server. Clicking "Sign in with Google" in `client.html` (must
+   be opened via `http://localhost:8000/client.html`, not `file://`, for the
+   redirect back to work) will now walk through the real Google login flow.
+
+First-time Google sign-in creates an account using the user's Google email
+as their username, with no local password set (they can only sign in via
+Google afterward - a separate password-based registration with that same
+email is rejected to avoid silently merging two identities).
 
 ## Message Protocol
 
@@ -105,4 +134,5 @@ every push (see the badge above).
 - [x] Auth: JWT-based login, WebSocket identifies users from their token
 - [x] Presence status: online-users grid with user-settable status (available/away/invisible)
 - [x] Hardening pass: fixed a stored-XSS bug, env-var secret key, password validation, rate limiting, pytest + CI
+- [x] Google OAuth login, alongside the existing password-based accounts
 - [ ] Stretch: typing indicators, private DMs

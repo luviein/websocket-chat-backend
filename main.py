@@ -1,15 +1,19 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.middleware.sessions import SessionMiddleware
 
 import auth
 import database
+from oauth import GOOGLE_OAUTH_ENABLED, oauth_client
 
 VALID_STATUSES = {"available", "away", "invisible"}
 DEFAULT_STATUS = "available"
@@ -41,6 +45,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# required by authlib to store OAuth state/nonce across the redirect to
+# Google and back
+app.add_middleware(SessionMiddleware, secret_key=auth.SECRET_KEY)
 
 
 class ConnectionManager:
@@ -108,10 +116,62 @@ def register(request: Request, credentials: UserCredentials):
 @limiter.limit(LOGIN_RATE_LIMIT)
 def login(request: Request, credentials: UserCredentials):
     user = database.get_user(credentials.username)
-    if user is None or not auth.verify_password(credentials.password, user["hashed_password"]):
+    # user["hashed_password"] is None for Google-only accounts - they have no
+    # local password to check against, so treat that the same as no match
+    if (
+        user is None
+        or user["hashed_password"] is None
+        or not auth.verify_password(credentials.password, user["hashed_password"])
+    ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = auth.create_access_token(credentials.username)
     return TokenResponse(access_token=token)
+
+
+@app.get("/client.html")
+def serve_client():
+    # serves the test client over http:// instead of file:// - needed so the
+    # Google OAuth redirect below has a real URL to send the user back to
+    return FileResponse(Path(__file__).parent / "client.html")
+
+
+@app.get("/auth/google/login")
+async def google_login(request: Request):
+    if not GOOGLE_OAUTH_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Google OAuth is not configured (missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET)",
+        )
+    redirect_uri = request.url_for("google_callback")
+    return await oauth_client.google.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/auth/google/callback", name="google_callback")
+async def google_callback(request: Request):
+    if not GOOGLE_OAUTH_ENABLED:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server")
+
+    token = await oauth_client.google.authorize_access_token(request)
+    userinfo = token.get("userinfo")
+    if not userinfo or "email" not in userinfo:
+        raise HTTPException(status_code=400, detail="Google did not return an email address")
+
+    email = userinfo["email"]
+    google_id = userinfo["sub"]
+
+    existing = database.get_user(email)
+    if existing is None:
+        database.create_google_user(email, google_id)
+    elif existing["google_id"] != google_id:
+        # a password-based account already owns this email - don't silently
+        # merge identities
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email already exists. Log in with your password instead.",
+        )
+
+    jwt_token = auth.create_access_token(email)
+    return RedirectResponse(url=f"/client.html?token={jwt_token}")
 
 
 async def broadcast_presence(room_id: str):
