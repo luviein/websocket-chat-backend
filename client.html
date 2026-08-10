@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chat Test Client</title>
+</head>
+<body>
+    <h2>Chat Test Client</h2>
+    <p>Username: <input id="username" value="user1" /> <button onclick="connect()">Connect</button></p>
+    <input id="messageInput" placeholder="type a message" style="width: 300px;" />
+    <button onclick="sendMessage()">Send</button>
+    <ul id="messages"></ul>
+
+    <script>
+        let ws = null;
+
+        function connect() {
+            const username = document.getElementById("username").value;
+            ws = new WebSocket(`ws://localhost:8000/ws/${username}`);
+
+            ws.onmessage = (event) => {
+                const messages = document.getElementById("messages");
+                const li = document.createElement("li");
+                li.textContent = event.data;
+                messages.appendChild(li);
+            };
+
+            ws.onopen = () => console.log("connected");
+            ws.onclose = () => console.log("disconnected");
+        }
+
+        function sendMessage() {
+            const input = document.getElementById("messageInput");
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(input.value);
+                input.value = "";
+            }
+        }
+
+        document.getElementById("messageInput").addEventListener("keypress", (e) => {
+            if (e.key === "Enter") sendMessage();
+        });
+    </script>
+</body>
+</html>
