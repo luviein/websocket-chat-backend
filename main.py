@@ -161,7 +161,11 @@ async def google_callback(request: Request):
 
     existing = database.get_user(email)
     if existing is None:
-        database.create_google_user(email, google_id)
+        # new account - don't finish creating it yet. Stash the pending
+        # signup in the signed session cookie and ask for a display name
+        # first, so chat doesn't just show the user's raw email address.
+        request.session["pending_google_signup"] = {"email": email, "google_id": google_id}
+        return RedirectResponse(url="/client.html?choose_display_name=1")
     elif existing["google_id"] != google_id:
         # a password-based account already owns this email - don't silently
         # merge identities
@@ -174,6 +178,29 @@ async def google_callback(request: Request):
     return RedirectResponse(url=f"/client.html?token={jwt_token}")
 
 
+class DisplayNameChoice(BaseModel):
+    display_name: str = Field(min_length=1, max_length=30)
+
+
+@app.post("/auth/google/complete-signup", response_model=TokenResponse)
+@limiter.limit(REGISTER_RATE_LIMIT)
+def complete_google_signup(request: Request, choice: DisplayNameChoice):
+    pending = request.session.get("pending_google_signup")
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail="No pending Google sign-in found - please sign in with Google again.",
+        )
+
+    created = database.create_google_user(pending["email"], pending["google_id"], choice.display_name)
+    if not created:
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+
+    del request.session["pending_google_signup"]
+    jwt_token = auth.create_access_token(pending["email"])
+    return TokenResponse(access_token=jwt_token)
+
+
 async def broadcast_presence(room_id: str):
     await manager.broadcast(
         {"type": "presence", "users": manager.presence_snapshot(room_id)}, room_id
@@ -182,12 +209,19 @@ async def broadcast_presence(room_id: str):
 
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(...)):
-    username = auth.decode_access_token(token)
-    if username is None:
+    account_id = auth.decode_access_token(token)
+    if account_id is None:
         await websocket.close(code=1008)  # policy violation: bad/missing token
         return
 
-    await manager.connect(websocket, room_id, username)
+    # account_id (email for Google accounts, chosen username for password
+    # accounts) is the stable, unique identity used for auth/DB lookups.
+    # display_name is the cosmetic name resolved from it, used everywhere
+    # chat-facing instead - this keeps a user's raw Google email out of
+    # every message/presence entry/join notice.
+    display_name = database.get_display_name(account_id)
+
+    await manager.connect(websocket, room_id, display_name)
 
     # send this room's recent history to the newly connected client only
     history = database.get_recent_messages(room_id)
@@ -198,7 +232,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
                 {"type": "chat", "username": row["username"], "content": row["content"]}
             )
 
-    await manager.broadcast({"type": "system", "content": f"{username} joined the room"}, room_id)
+    await manager.broadcast({"type": "system", "content": f"{display_name} joined the room"}, room_id)
     await broadcast_presence(room_id)
 
     try:
@@ -208,9 +242,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
             if msg_type == "chat":
                 content = data.get("content", "")
-                database.save_message(room_id, username, content)
+                database.save_message(room_id, display_name, content)
                 await manager.broadcast(
-                    {"type": "chat", "username": username, "content": content}, room_id
+                    {"type": "chat", "username": display_name, "content": content}, room_id
                 )
 
             elif msg_type == "set_status":
@@ -221,6 +255,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
-        await manager.broadcast({"type": "system", "content": f"{username} left the room"}, room_id)
+        await manager.broadcast({"type": "system", "content": f"{display_name} left the room"}, room_id)
         if room_id in manager.rooms:
             await broadcast_presence(room_id)

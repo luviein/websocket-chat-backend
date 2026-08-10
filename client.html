@@ -148,6 +148,34 @@
             background: var(--system-bg);
         }
 
+        /* Google's official "Sign in with Google" button styling */
+        .google-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            margin-top: 0.6rem;
+            padding: 0.4rem 0.7rem;
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: #3c4043;
+            background: #ffffff;
+            border: 1px solid #dadce0;
+            border-radius: 7px;
+            text-decoration: none;
+            cursor: pointer;
+            width: fit-content;
+        }
+
+        .google-btn svg {
+            width: 15px;
+            height: 15px;
+        }
+
+        .google-btn:hover {
+            box-shadow: 0 1px 3px rgba(60, 64, 67, 0.3);
+            background: #f8f9fa;
+        }
+
         .status {
             font-size: 0.8rem;
             color: var(--muted);
@@ -337,8 +365,27 @@
                     <button onclick="register()">Register</button>
                     <button class="secondary" onclick="login()">Log In</button>
                 </div>
-                <p id="authStatus" class="status">Not logged in.</p>
-                <p class="status"><a href="/auth/google/login">Sign in with Google</a></p>
+                <p id="authStatus" class="status"></p>
+                <a href="/auth/google/login" class="google-btn">
+                    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                        <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+                        <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
+                        <path fill="#FBBC05" d="M3.964 10.71c-.18-.54-.282-1.117-.282-1.71s.102-1.17.282-1.71V4.958H.957C.347 6.173 0 7.548 0 9s.348 2.827.957 4.042l3.007-2.332z"/>
+                        <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                    </svg>
+                    Sign in with Google
+                </a>
+            </div>
+
+            <!-- View: Choose a display name (first-time Google sign-in only) -->
+            <div class="panel view hidden" id="chooseNameView">
+                <p class="panel-title">Choose a Display Name</p>
+                <p class="status" style="margin-bottom: 0.6rem;">This is what others will see in chat instead of your email.</p>
+                <div class="row">
+                    <input id="displayNameInput" placeholder="display name" maxlength="30" />
+                    <button onclick="submitDisplayName()">Continue</button>
+                </div>
+                <p id="displayNameStatus" class="status"></p>
             </div>
 
             <!-- View 2: Join a Room -->
@@ -396,8 +443,19 @@
         let token = null;
         let myStatus = "available";
 
+        // If served over http(s) (e.g. http://localhost:8001/client.html),
+        // always target that SAME host:port - hardcoding 8000 here would
+        // silently break whenever the server runs on a different port.
+        // Falls back to 8000 only when opened directly as a file:// page,
+        // where there's no server origin to detect.
+        const API_BASE = window.location.protocol.startsWith("http")
+            ? window.location.origin
+            : "http://localhost:8000";
+        const WS_BASE = API_BASE.replace(/^http/, "ws");
+
         const views = {
             auth: document.getElementById("authView"),
+            chooseName: document.getElementById("chooseNameView"),
             room: document.getElementById("roomView"),
             chat: document.getElementById("chatView"),
         };
@@ -438,7 +496,7 @@
             const password = document.getElementById("authPassword").value;
             const status = document.getElementById("authStatus");
 
-            const res = await fetch(`http://localhost:8000${path}`, {
+            const res = await fetch(`${API_BASE}${path}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username, password }),
@@ -459,7 +517,7 @@
         function connect() {
             const connectStatus = document.getElementById("connectStatus");
             const room = document.getElementById("room").value;
-            ws = new WebSocket(`ws://localhost:8000/ws/${room}?token=${token}`);
+            ws = new WebSocket(`${WS_BASE}/ws/${room}?token=${token}`);
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
@@ -504,7 +562,7 @@
             }
             token = null;
             document.getElementById("authPassword").value = "";
-            document.getElementById("authStatus").textContent = "Not logged in.";
+            document.getElementById("authStatus").textContent = "";
             document.getElementById("authStatus").className = "status";
             showView("auth");
         }
@@ -579,8 +637,57 @@
             return false;
         }
 
+        function checkForChooseDisplayName() {
+            // First-time Google sign-ins redirect back here as
+            // /client.html?choose_display_name=1 instead of handing over a
+            // token directly - the account isn't finished being created yet.
+            const params = new URLSearchParams(window.location.search);
+            if (params.get("choose_display_name") === "1") {
+                window.history.replaceState({}, "", window.location.pathname);
+                return true;
+            }
+            return false;
+        }
+
+        async function submitDisplayName() {
+            const displayName = document.getElementById("displayNameInput").value.trim();
+            const status = document.getElementById("displayNameStatus");
+
+            if (!displayName) {
+                status.textContent = "Please enter a display name.";
+                status.className = "status error";
+                return;
+            }
+
+            const res = await fetch(`${API_BASE}/auth/google/complete-signup`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                // credentials: "include" so the session cookie set during the
+                // Google redirect (holding the pending signup) is sent along
+                credentials: "include",
+                body: JSON.stringify({ display_name: displayName }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                status.textContent = `Error: ${err.detail}`;
+                status.className = "status error";
+                return;
+            }
+
+            const data = await res.json();
+            token = data.access_token;
+            showView("room");
+        }
+
         setStatus("available"); // initialize picker UI (doesn't send until connected)
-        showView(checkForOAuthToken() ? "room" : "auth");
+        if (checkForOAuthToken()) {
+            showView("room");
+        } else if (checkForChooseDisplayName()) {
+            showView("chooseName");
+        } else {
+            showView("auth");
+        }
     </script>
 </body>
 </html>

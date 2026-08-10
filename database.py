@@ -29,7 +29,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             hashed_password TEXT,
-            google_id TEXT UNIQUE
+            google_id TEXT UNIQUE,
+            display_name TEXT
         )
         """
     )
@@ -53,13 +54,13 @@ def create_user(username: str, hashed_password: str) -> bool:
         conn.close()
 
 
-def create_google_user(username: str, google_id: str) -> bool:
+def create_google_user(username: str, google_id: str, display_name: str) -> bool:
     """Returns False if the username is already taken (e.g. by a password account)."""
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            "INSERT INTO users (username, hashed_password, google_id) VALUES (?, NULL, ?)",
-            (username, google_id),
+            "INSERT INTO users (username, hashed_password, google_id, display_name) VALUES (?, NULL, ?, ?)",
+            (username, google_id, display_name),
         )
         conn.commit()
         return True
@@ -73,7 +74,7 @@ def get_user(username: str) -> sqlite3.Row | None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT username, hashed_password, google_id FROM users WHERE username = ?",
+        "SELECT username, hashed_password, google_id, display_name FROM users WHERE username = ?",
         (username,),
     ).fetchone()
     conn.close()
@@ -84,11 +85,21 @@ def get_user_by_google_id(google_id: str) -> sqlite3.Row | None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT username, hashed_password, google_id FROM users WHERE google_id = ?",
+        "SELECT username, hashed_password, google_id, display_name FROM users WHERE google_id = ?",
         (google_id,),
     ).fetchone()
     conn.close()
     return row
+
+
+def get_display_name(username: str) -> str:
+    """Falls back to the account identifier itself (email or password-account
+    username) if no display_name has been set - e.g. all password accounts,
+    which use their chosen username as-is."""
+    user = get_user(username)
+    if user and user["display_name"]:
+        return user["display_name"]
+    return username
 
 
 def save_message(room_id: str, username: str, content: str):
