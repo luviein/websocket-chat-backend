@@ -1,9 +1,10 @@
-import asyncio
 import json
 import uuid
+
+import pytest
 import websockets
 
-from test_helpers import get_token
+from test_helpers import get_token, ws_url
 
 
 async def recv_json(ws):
@@ -21,18 +22,28 @@ def status_of(roster, username):
     return next(u["status"] for u in roster if u["username"] == username)
 
 
-async def main():
+@pytest.mark.asyncio
+async def test_default_status_is_available(server):
     room = f"status-test-{uuid.uuid4().hex[:8]}"
-    alice, alice_token = get_token("alice")
-    bob, bob_token = get_token("bob")
+    alice, alice_token = get_token(server, "alice")
 
-    async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={alice_token}") as ws_alice:
+    async with websockets.connect(ws_url(server, room, alice_token)) as ws_alice:
         await recv_json(ws_alice)  # system: joined
         roster = await recv_until_presence(ws_alice)
         assert status_of(roster, alice) == "available", "default status should be 'available'"
-        print("PASS: default status is 'available'")
 
-        async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={bob_token}") as ws_bob:
+
+@pytest.mark.asyncio
+async def test_status_change_broadcasts_and_ignores_invalid_values(server):
+    room = f"status-test-{uuid.uuid4().hex[:8]}"
+    alice, alice_token = get_token(server, "alice")
+    bob, bob_token = get_token(server, "bob")
+
+    async with websockets.connect(ws_url(server, room, alice_token)) as ws_alice:
+        await recv_json(ws_alice)  # system: joined
+        await recv_until_presence(ws_alice)  # alice's own initial snapshot
+
+        async with websockets.connect(ws_url(server, room, bob_token)) as ws_bob:
             await recv_until_presence(ws_bob)  # bob's own initial snapshot
             await recv_until_presence(ws_alice)  # alice's snapshot updated with bob
 
@@ -40,19 +51,13 @@ async def main():
             await ws_alice.send(json.dumps({"type": "set_status", "status": "away"}))
 
             alice_roster = await recv_until_presence(ws_alice)
-            assert status_of(alice_roster, alice) == "away", alice_roster
-            print("PASS: alice sees her own status change reflected")
+            assert status_of(alice_roster, alice) == "away", "alice should see her own status change"
 
             bob_roster = await recv_until_presence(ws_bob)
-            assert status_of(bob_roster, alice) == "away", bob_roster
-            print("PASS: bob sees alice's status change too")
+            assert status_of(bob_roster, alice) == "away", "bob should see alice's status change too"
 
             # invalid status values should be ignored, not crash or corrupt state
             await ws_alice.send(json.dumps({"type": "set_status", "status": "not-a-real-status"}))
             await ws_alice.send(json.dumps({"type": "chat", "content": "still alive"}))
             confirm = await recv_json(ws_alice)  # echo of the chat message proves the connection is still fine
             assert confirm == {"type": "chat", "username": alice, "content": "still alive"}, confirm
-            print("PASS: invalid status value is ignored without breaking the connection")
-
-
-asyncio.run(main())

@@ -1,7 +1,10 @@
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "chat.db"
+# overridable so tests can point at an isolated, throwaway database instead
+# of the real local dev chat.db
+DB_PATH = Path(os.environ.get("CHAT_DB_PATH", Path(__file__).parent / "chat.db"))
 
 
 def init_db():

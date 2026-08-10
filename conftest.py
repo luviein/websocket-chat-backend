@@ -1,0 +1,65 @@
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+import requests
+
+ROOT = Path(__file__).parent
+# Deliberately NOT port 8000 - that's the port a developer typically runs
+# their own local server on while testing client.html by hand. Using a
+# different port means the test suite always starts its own isolated
+# instance instead of accidentally talking to whatever's already running.
+TEST_PORT = 8123
+BASE_URL = f"http://localhost:{TEST_PORT}"
+
+
+def _wait_for_server(timeout: float = 15.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            requests.get(BASE_URL, timeout=1)
+            return True
+        except requests.exceptions.ConnectionError:
+            time.sleep(0.3)
+    return False
+
+
+@pytest.fixture(scope="session")
+def server(tmp_path_factory):
+    """Starts the real server as a subprocess against an isolated, throwaway
+    database, for the whole test session. Using sys.executable (rather than a
+    hardcoded venv path) keeps this portable between local dev and CI."""
+    db_path = tmp_path_factory.mktemp("data") / "test_chat.db"
+
+    env = os.environ.copy()
+    env["CHAT_DB_PATH"] = str(db_path)
+    env["JWT_SECRET_KEY"] = "test-secret-key"
+    # tests all connect from 127.0.0.1, so raise the rate limits well above
+    # anything a real single client would hit, instead of disabling them
+    env["REGISTER_RATE_LIMIT"] = "1000/minute"
+    env["LOGIN_RATE_LIMIT"] = "1000/minute"
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "main:app", "--port", str(TEST_PORT)],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if not _wait_for_server():
+        proc.terminate()
+        out, err = proc.communicate(timeout=5)
+        raise RuntimeError(f"Server failed to start.\nstdout:\n{out}\nstderr:\n{err}")
+
+    yield BASE_URL
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
