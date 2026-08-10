@@ -49,6 +49,7 @@ Run these while the server is up in another terminal:
 python test_rooms.py         # messages stay scoped to their room
 python test_persistence.py   # message history persists and replays to new joiners
 python test_auth.py          # register/login/token flow, and WebSocket auth enforcement
+python test_presence.py      # new joiners see who's already online in the room
 ```
 
 ## Roadmap
@@ -57,4 +58,5 @@ python test_auth.py          # register/login/token flow, and WebSocket auth enf
 - [x] Rooms/channels: join a specific room, messages scoped to that room
 - [x] Persistence: store message history in a database (SQLite), replayed to new joiners
 - [x] Auth: JWT-based login, WebSocket identifies users from their token
-- [ ] Stretch: typing indicators, presence status, private DMs
+- [x] Presence status: new joiners see who's currently online in the room
+- [ ] Stretch: typing indicators, private DMs

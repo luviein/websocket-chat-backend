@@ -28,20 +28,24 @@ app.add_middleware(
 
 class ConnectionManager:
     def __init__(self):
-        self.rooms: dict[str, list[WebSocket]] = {}
+        # room_id -> {websocket: username}
+        self.rooms: dict[str, dict[WebSocket, str]] = {}
 
-    async def connect(self, websocket: WebSocket, room_id: str):
+    async def connect(self, websocket: WebSocket, room_id: str, username: str):
         await websocket.accept()
-        self.rooms.setdefault(room_id, []).append(websocket)
+        self.rooms.setdefault(room_id, {})[websocket] = username
 
     def disconnect(self, websocket: WebSocket, room_id: str):
-        self.rooms[room_id].remove(websocket)
+        del self.rooms[room_id][websocket]
         if not self.rooms[room_id]:
             del self.rooms[room_id]
 
     async def broadcast(self, message: str, room_id: str):
-        for connection in self.rooms.get(room_id, []):
+        for connection in self.rooms.get(room_id, {}):
             await connection.send_text(message)
+
+    def online_users(self, room_id: str) -> list[str]:
+        return list(self.rooms.get(room_id, {}).values())
 
 
 manager = ConnectionManager()
@@ -88,7 +92,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
         await websocket.close(code=1008)  # policy violation: bad/missing token
         return
 
-    await manager.connect(websocket, room_id)
+    # snapshot who's already online BEFORE this connection is added, so the
+    # newly joined user isn't listed as if someone else were already here
+    already_online = manager.online_users(room_id)
+
+    await manager.connect(websocket, room_id, username)
 
     # send this room's recent history to the newly connected client only
     history = database.get_recent_messages(room_id)
@@ -96,6 +104,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
         await websocket.send_text("--- Messages you have missed ---")
         for row in history:
             await websocket.send_text(f"{row['username']}: {row['content']}")
+
+    if already_online:
+        await websocket.send_text(f"--- Online now: {', '.join(already_online)} ---")
 
     await manager.broadcast(f"{username} joined the room", room_id)
     try:
