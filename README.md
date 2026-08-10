@@ -41,6 +41,28 @@ ws://localhost:8000/ws/{room_id}?token={access_token}
 The server decodes the username from the token server-side — clients can no
 longer just claim to be anyone by typing a name in the URL.
 
+## Message Protocol
+
+All WebSocket messages are JSON. Client -> server:
+
+```json
+{"type": "chat", "content": "hello"}
+{"type": "set_status", "status": "available" | "away" | "invisible"}
+```
+
+Server -> client:
+
+```json
+{"type": "chat", "username": "...", "content": "..."}
+{"type": "system", "content": "..."}
+{"type": "presence", "users": [{"username": "...", "status": "..."}]}
+```
+
+`presence` is a full roster snapshot (not an incremental diff) sent to everyone
+in the room whenever someone joins, leaves, or changes their status - simplest
+for clients to render since they can just replace their whole user grid each
+time instead of tracking adds/removes themselves.
+
 ## Tests
 
 Run these while the server is up in another terminal:
@@ -49,7 +71,8 @@ Run these while the server is up in another terminal:
 python test_rooms.py         # messages stay scoped to their room
 python test_persistence.py   # message history persists and replays to new joiners
 python test_auth.py          # register/login/token flow, and WebSocket auth enforcement
-python test_presence.py      # new joiners see who's already online in the room
+python test_presence.py      # presence snapshots update correctly as users join/leave
+python test_status.py        # users can set their own status, and it's visible to others
 ```
 
 ## Roadmap
@@ -58,5 +81,5 @@ python test_presence.py      # new joiners see who's already online in the room
 - [x] Rooms/channels: join a specific room, messages scoped to that room
 - [x] Persistence: store message history in a database (SQLite), replayed to new joiners
 - [x] Auth: JWT-based login, WebSocket identifies users from their token
-- [x] Presence status: new joiners see who's currently online in the room
+- [x] Presence status: online-users grid with user-settable status (available/away/invisible)
 - [ ] Stretch: typing indicators, private DMs

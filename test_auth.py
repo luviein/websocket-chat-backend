@@ -1,3 +1,4 @@
+import json
 import uuid
 
 import requests
@@ -61,8 +62,8 @@ async def test_websocket_uses_real_username_from_token(username, token):
     async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={token}") as ws:
         # server should broadcast using the REAL username decoded from the token,
         # even though the client never sent a username anywhere
-        joined_msg = await ws.recv()
-        assert joined_msg == f"{username} joined the room", joined_msg
+        joined_msg = json.loads(await ws.recv())
+        assert joined_msg == {"type": "system", "content": f"{username} joined the room"}, joined_msg
     print("PASS: WebSocket identifies the user from their token, not a client-supplied name")
 
 

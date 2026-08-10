@@ -1,8 +1,21 @@
 import asyncio
+import json
 import uuid
 import websockets
 
 from test_helpers import get_token
+
+
+async def recv_json(ws):
+    return json.loads(await ws.recv())
+
+
+async def recv_until_presence(ws):
+    """Skip past any system/chat messages and return the next presence snapshot."""
+    while True:
+        msg = await recv_json(ws)
+        if msg.get("type") == "presence":
+            return msg["users"]
 
 
 async def main():
@@ -11,31 +24,38 @@ async def main():
     bob, bob_token = get_token("bob")
     carol, carol_token = get_token("carol")
 
-    # alice joins an empty room - should NOT see an "online now" message,
-    # since no one else is there yet
     async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={alice_token}") as ws_alice:
-        first_msg = await ws_alice.recv()
-        assert first_msg == f"{alice} joined the room", (
-            f"empty room should skip the online-now header, got: {first_msg!r}"
-        )
-        print("PASS: first joiner sees no 'online now' header")
+        # alice joins alone - presence snapshot should list just herself
+        await recv_json(ws_alice)  # system: "alice joined the room"
+        alice_roster = await recv_until_presence(ws_alice)
+        assert [u["username"] for u in alice_roster] == [alice], alice_roster
+        assert alice_roster[0]["status"] == "available", "default status should be 'available'"
+        print("PASS: solo joiner sees themselves in the presence snapshot")
 
-        # bob joins next - should see alice listed as already online
         async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={bob_token}") as ws_bob:
-            bob_first_msgs = [await ws_bob.recv(), await ws_bob.recv()]
-            assert f"--- Online now: {alice} ---" in bob_first_msgs, bob_first_msgs
-            print("PASS: second joiner sees the first user listed as online")
+            # bob joins - both should now see alice AND bob in the roster
+            bob_roster = await recv_until_presence(ws_bob)
+            assert {u["username"] for u in bob_roster} == {alice, bob}, bob_roster
+            print("PASS: second joiner's own presence snapshot includes both users")
 
-            # alice should also see bob's join notice live
-            alice_next = await ws_alice.recv()
-            assert alice_next == f"{bob} joined the room", alice_next
+            alice_roster = await recv_until_presence(ws_alice)
+            assert {u["username"] for u in alice_roster} == {alice, bob}, alice_roster
+            print("PASS: existing user receives an updated presence snapshot when someone joins")
 
-            # carol joins - should see BOTH alice and bob listed
             async with websockets.connect(f"ws://localhost:8000/ws/{room}?token={carol_token}") as ws_carol:
-                carol_first = await ws_carol.recv()
-                assert carol_first.startswith("--- Online now:"), carol_first
-                assert alice in carol_first and bob in carol_first, carol_first
-                print("PASS: third joiner sees both prior users listed as online")
+                carol_roster = await recv_until_presence(ws_carol)
+                assert {u["username"] for u in carol_roster} == {alice, bob, carol}, carol_roster
+                print("PASS: third joiner sees all three users")
+
+                # drain the "carol joined" presence update on the other connections
+                # now, so it isn't mistaken for the "carol left" update below
+                await recv_until_presence(ws_alice)
+                await recv_until_presence(ws_bob)
+
+            # carol left - alice and bob should get an updated snapshot without her
+            alice_roster = await recv_until_presence(ws_alice)
+            assert {u["username"] for u in alice_roster} == {alice, bob}, alice_roster
+            print("PASS: presence snapshot updates after a user disconnects")
 
 
 asyncio.run(main())

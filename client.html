@@ -13,6 +13,9 @@
             --accent: #4f46e5;
             --accent-hover: #4338ca;
             --system-bg: #f0f0f5;
+            --available: #22c55e;
+            --away: #f59e0b;
+            --invisible: #9ca3af;
         }
 
         * {
@@ -68,6 +71,7 @@
         .row {
             display: flex;
             gap: 0.5rem;
+            align-items: center;
         }
 
         .row + .row {
@@ -166,6 +170,70 @@
             padding: 0;
             margin: 0;
         }
+
+        /* status dot picker */
+        .status-picker {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .dot-btn {
+            width: 1.6rem;
+            height: 1.6rem;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            padding: 0;
+            cursor: pointer;
+        }
+
+        .dot-btn[data-status="available"] { background: var(--available); }
+        .dot-btn[data-status="away"] { background: var(--away); }
+        .dot-btn[data-status="invisible"] { background: var(--invisible); }
+
+        .dot-btn.selected {
+            border-color: var(--text);
+        }
+
+        /* online users grid */
+        #userGrid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+            gap: 0.5rem;
+        }
+
+        .user-chip {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.55rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            font-size: 0.8rem;
+            overflow: hidden;
+        }
+
+        .user-chip .dot {
+            width: 0.55rem;
+            height: 0.55rem;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .user-chip .dot.available { background: var(--available); }
+        .user-chip .dot.away { background: var(--away); }
+        .user-chip .dot.invisible { background: var(--invisible); }
+
+        .user-chip .name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .empty-grid {
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
@@ -198,6 +266,20 @@
         </div>
 
         <div class="panel">
+            <p class="panel-title">Your Status</p>
+            <div class="status-picker">
+                <button class="dot-btn" data-status="available" title="Available" onclick="setStatus('available')"></button>
+                <button class="dot-btn" data-status="away" title="Away" onclick="setStatus('away')"></button>
+                <button class="dot-btn" data-status="invisible" title="Invisible" onclick="setStatus('invisible')"></button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <p class="panel-title">Online Now</p>
+            <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
+        </div>
+
+        <div class="panel">
             <p class="panel-title">Chat</p>
             <ul id="messages"></ul>
             <div class="send-row">
@@ -210,14 +292,7 @@
     <script>
         let ws = null;
         let token = null;
-
-        function isSystemMessage(text) {
-            return (
-                text.startsWith("---") ||
-                text.endsWith("joined the room") ||
-                text.endsWith("left the room")
-            );
-        }
+        let myStatus = "available";
 
         async function register() {
             await authRequest("/register");
@@ -263,31 +338,67 @@
             ws = new WebSocket(`ws://localhost:8000/ws/${room}?token=${token}`);
 
             ws.onmessage = (event) => {
-                const messages = document.getElementById("messages");
-                const li = document.createElement("li");
-                li.textContent = event.data;
-                if (isSystemMessage(event.data)) {
-                    li.classList.add("system");
+                const msg = JSON.parse(event.data);
+                if (msg.type === "chat") {
+                    addMessage(`${msg.username}: ${msg.content}`, false);
+                } else if (msg.type === "system") {
+                    addMessage(msg.content, true);
+                } else if (msg.type === "presence") {
+                    renderUserGrid(msg.users);
                 }
-                messages.appendChild(li);
-                messages.scrollTop = messages.scrollHeight;
             };
 
             ws.onopen = () => {
                 connectStatus.textContent = `Connected to "${room}"`;
                 connectStatus.className = "status ok";
+                setStatus(myStatus); // announce current status once connected
             };
 
             ws.onclose = () => {
                 connectStatus.textContent = "Disconnected.";
                 connectStatus.className = "status error";
+                renderUserGrid([]);
             };
+        }
+
+        function addMessage(text, isSystem) {
+            const messages = document.getElementById("messages");
+            const li = document.createElement("li");
+            li.textContent = text;
+            if (isSystem) li.classList.add("system");
+            messages.appendChild(li);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function renderUserGrid(users) {
+            const grid = document.getElementById("userGrid");
+            grid.innerHTML = "";
+            if (!users.length) {
+                grid.innerHTML = '<span class="empty-grid">No one here yet.</span>';
+                return;
+            }
+            for (const user of users) {
+                const chip = document.createElement("div");
+                chip.className = "user-chip";
+                chip.innerHTML = `<span class="dot ${user.status}"></span><span class="name">${user.username}</span>`;
+                grid.appendChild(chip);
+            }
+        }
+
+        function setStatus(status) {
+            myStatus = status;
+            document.querySelectorAll(".dot-btn").forEach((btn) => {
+                btn.classList.toggle("selected", btn.dataset.status === status);
+            });
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "set_status", status }));
+            }
         }
 
         function sendMessage() {
             const input = document.getElementById("messageInput");
             if (ws && ws.readyState === WebSocket.OPEN && input.value.trim()) {
-                ws.send(input.value);
+                ws.send(JSON.stringify({ type: "chat", content: input.value }));
                 input.value = "";
             }
         }
@@ -295,6 +406,8 @@
         document.getElementById("messageInput").addEventListener("keypress", (e) => {
             if (e.key === "Enter") sendMessage();
         });
+
+        setStatus("available"); // initialize picker UI (doesn't send until connected)
     </script>
 </body>
 </html>
