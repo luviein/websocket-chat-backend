@@ -163,3 +163,5 @@ every push (see the badge above).
 - [x] Hardening pass: fixed a stored-XSS bug, env-var secret key, password validation, rate limiting, pytest + CI
 - [x] Google OAuth login, alongside the existing password-based accounts
 - [ ] Stretch: typing indicators, private DMs
+
+<img width="669" height="824" alt="image" src="https://github.com/user-attachments/assets/2235c011-142f-4b31-b78e-0610deda0c62" />
