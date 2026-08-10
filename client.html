@@ -52,6 +52,10 @@
             margin: 0 0 0.5rem;
         }
 
+        .hidden {
+            display: none !important;
+        }
+
         .panel {
             background: var(--panel);
             border: 1px solid var(--border);
@@ -130,6 +134,29 @@
 
         .status.ok {
             color: #1f8a4c;
+        }
+
+        /* chat header bar: room name + change room / logout controls */
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+
+        .chat-header .room-name {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .chat-header .actions {
+            display: flex;
+            gap: 0.4rem;
+        }
+
+        .chat-header button {
+            font-size: 0.78rem;
+            padding: 0.35rem 0.6rem;
         }
 
         #messages {
@@ -272,8 +299,9 @@
             <p class="subtitle">Minimal test client for the WebSocket chat backend</p>
         </div>
 
-        <div class="panel">
-            <p class="panel-title">1. Register or Log In</p>
+        <!-- View 1: Register / Log In -->
+        <div class="panel" id="authView">
+            <p class="panel-title">Register or Log In</p>
             <div class="row">
                 <input id="authUsername" placeholder="username" value="user1" />
                 <input id="authPassword" type="password" placeholder="password" value="password123" />
@@ -285,39 +313,51 @@
             <p id="authStatus" class="status">Not logged in.</p>
         </div>
 
-        <div class="panel">
-            <p class="panel-title">2. Join a Room</p>
+        <!-- View 2: Join a Room -->
+        <div class="panel hidden" id="roomView">
+            <p class="panel-title">Join a Room</p>
             <div class="row">
                 <input id="room" placeholder="room name" value="general" />
                 <button onclick="connect()">Connect</button>
             </div>
-            <p id="connectStatus" class="status">Not connected.</p>
+            <p id="connectStatus" class="status"></p>
         </div>
 
-        <div class="panel">
-            <p class="panel-title">Online Now</p>
-            <div class="presence-layout">
-                <div class="status-picker">
-                    <button class="status-option" data-status="available" onclick="setStatus('available')">
-                        <span class="dot-btn"></span> Available
-                    </button>
-                    <button class="status-option" data-status="away" onclick="setStatus('away')">
-                        <span class="dot-btn"></span> Away
-                    </button>
-                    <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
-                        <span class="dot-btn"></span> Invisible
-                    </button>
+        <!-- View 3: Chat Room -->
+        <div class="hidden" id="chatView" style="display: flex; flex-direction: column; gap: 1rem;">
+            <div class="panel chat-header">
+                <span class="room-name">Room: <span id="currentRoomLabel"></span></span>
+                <div class="actions">
+                    <button class="secondary" onclick="changeRoom()">Change Room</button>
+                    <button class="secondary" onclick="logout()">Log Out</button>
                 </div>
-                <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
             </div>
-        </div>
 
-        <div class="panel">
-            <p class="panel-title">Chat</p>
-            <ul id="messages"></ul>
-            <div class="send-row">
-                <input id="messageInput" placeholder="Type a message and press Enter" />
-                <button onclick="sendMessage()">Send</button>
+            <div class="panel">
+                <p class="panel-title">Online Now</p>
+                <div class="presence-layout">
+                    <div class="status-picker">
+                        <button class="status-option" data-status="available" onclick="setStatus('available')">
+                            <span class="dot-btn"></span> Available
+                        </button>
+                        <button class="status-option" data-status="away" onclick="setStatus('away')">
+                            <span class="dot-btn"></span> Away
+                        </button>
+                        <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
+                            <span class="dot-btn"></span> Invisible
+                        </button>
+                    </div>
+                    <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <p class="panel-title">Chat</p>
+                <ul id="messages"></ul>
+                <div class="send-row">
+                    <input id="messageInput" placeholder="Type a message and press Enter" />
+                    <button onclick="sendMessage()">Send</button>
+                </div>
             </div>
         </div>
     </div>
@@ -326,6 +366,12 @@
         let ws = null;
         let token = null;
         let myStatus = "available";
+
+        function showView(view) {
+            document.getElementById("authView").classList.toggle("hidden", view !== "auth");
+            document.getElementById("roomView").classList.toggle("hidden", view !== "room");
+            document.getElementById("chatView").classList.toggle("hidden", view !== "chat");
+        }
 
         async function register() {
             await authRequest("/register");
@@ -355,18 +401,11 @@
 
             const data = await res.json();
             token = data.access_token;
-            status.textContent = `Logged in as ${username}`;
-            status.className = "status ok";
+            showView("room");
         }
 
         function connect() {
             const connectStatus = document.getElementById("connectStatus");
-            if (!token) {
-                connectStatus.textContent = "Register or log in first.";
-                connectStatus.className = "status error";
-                return;
-            }
-
             const room = document.getElementById("room").value;
             ws = new WebSocket(`ws://localhost:8000/ws/${room}?token=${token}`);
 
@@ -382,8 +421,9 @@
             };
 
             ws.onopen = () => {
-                connectStatus.textContent = `Connected to "${room}"`;
-                connectStatus.className = "status ok";
+                document.getElementById("currentRoomLabel").textContent = room;
+                document.getElementById("messages").innerHTML = "";
+                showView("chat");
                 setStatus(myStatus); // announce current status once connected
             };
 
@@ -392,6 +432,29 @@
                 connectStatus.className = "status error";
                 renderUserGrid([]);
             };
+        }
+
+        function changeRoom() {
+            if (ws) {
+                ws.onclose = null; // avoid the disconnect handler firing while we navigate away
+                ws.close();
+                ws = null;
+            }
+            document.getElementById("connectStatus").textContent = "";
+            showView("room");
+        }
+
+        function logout() {
+            if (ws) {
+                ws.onclose = null;
+                ws.close();
+                ws = null;
+            }
+            token = null;
+            document.getElementById("authPassword").value = "";
+            document.getElementById("authStatus").textContent = "Not logged in.";
+            document.getElementById("authStatus").className = "status";
+            showView("auth");
         }
 
         function addMessage(text, isSystem) {
@@ -441,6 +504,7 @@
         });
 
         setStatus("available"); // initialize picker UI (doesn't send until connected)
+        showView("auth");
     </script>
 </body>
 </html>
