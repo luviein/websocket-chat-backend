@@ -1,11 +1,23 @@
+import os
+import sys
 from datetime import datetime, timedelta, timezone
 
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-# NOTE: hardcoded for local dev/practice only. In a real app this must come
-# from an environment variable and must never be committed to source control.
-SECRET_KEY = "dev-secret-key-not-for-production"
+load_dotenv()
+
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = "dev-secret-key-not-for-production"
+    print(
+        "WARNING: JWT_SECRET_KEY is not set - using an insecure default key. "
+        "Set JWT_SECRET_KEY in your environment (see .env.example) before deploying "
+        "this publicly, otherwise anyone can forge login tokens.",
+        file=sys.stderr,
+    )
+
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 

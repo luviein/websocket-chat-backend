@@ -1,14 +1,23 @@
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import auth
 import database
 
 VALID_STATUSES = {"available", "away", "invisible"}
 DEFAULT_STATUS = "available"
+
+# overridable so tests (which all hit the server from 127.0.0.1) aren't
+# throttled by limits meant for real, separate clients
+REGISTER_RATE_LIMIT = os.environ.get("REGISTER_RATE_LIMIT", "5/minute")
+LOGIN_RATE_LIMIT = os.environ.get("LOGIN_RATE_LIMIT", "10/minute")
 
 
 @asynccontextmanager
@@ -18,6 +27,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# rate limit /register and /login to make brute-force/spam registration harder
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # NOTE: wide open for local dev/practice only - a real app should restrict
 # this to the actual frontend's origin.
@@ -64,8 +78,9 @@ manager = ConnectionManager()
 
 
 class UserCredentials(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=50)
+    # max_length=72 matches bcrypt's hard limit (longer passwords error at hash time)
+    password: str = Field(min_length=8, max_length=72)
 
 
 class TokenResponse(BaseModel):
@@ -79,7 +94,8 @@ def health_check():
 
 
 @app.post("/register", response_model=TokenResponse)
-def register(credentials: UserCredentials):
+@limiter.limit(REGISTER_RATE_LIMIT)
+def register(request: Request, credentials: UserCredentials):
     hashed = auth.hash_password(credentials.password)
     created = database.create_user(credentials.username, hashed)
     if not created:
@@ -89,7 +105,8 @@ def register(credentials: UserCredentials):
 
 
 @app.post("/login", response_model=TokenResponse)
-def login(credentials: UserCredentials):
+@limiter.limit(LOGIN_RATE_LIMIT)
+def login(request: Request, credentials: UserCredentials):
     user = database.get_user(credentials.username)
     if user is None or not auth.verify_password(credentials.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")

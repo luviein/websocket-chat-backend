@@ -527,7 +527,16 @@
             for (const user of users) {
                 const chip = document.createElement("div");
                 chip.className = "user-chip";
-                chip.innerHTML = `<span class="dot ${user.status}"></span><span class="name">${user.username}</span>`;
+
+                const dot = document.createElement("span");
+                dot.className = `dot ${user.status}`;
+
+                const name = document.createElement("span");
+                name.className = "name";
+                name.textContent = user.username; // textContent, not innerHTML - usernames are user-controlled input
+
+                chip.appendChild(dot);
+                chip.appendChild(name);
                 grid.appendChild(chip);
             }
         }
