@@ -5,22 +5,64 @@
 </head>
 <body>
     <h2>Chat Test Client</h2>
-    <p>
+
+    <fieldset>
+        <legend>1. Register or Login</legend>
+        Username: <input id="authUsername" value="user1" />
+        Password: <input id="authPassword" type="password" value="password123" />
+        <button onclick="register()">Register</button>
+        <button onclick="login()">Login</button>
+        <p id="authStatus">Not logged in.</p>
+    </fieldset>
+
+    <fieldset>
+        <legend>2. Join a room</legend>
         Room: <input id="room" value="general" />
-        Username: <input id="username" value="user1" />
         <button onclick="connect()">Connect</button>
-    </p>
+    </fieldset>
+
     <input id="messageInput" placeholder="type a message" style="width: 300px;" />
     <button onclick="sendMessage()">Send</button>
     <ul id="messages"></ul>
 
     <script>
         let ws = null;
+        let token = null;
+
+        async function register() {
+            await authRequest("/register");
+        }
+
+        async function login() {
+            await authRequest("/login");
+        }
+
+        async function authRequest(path) {
+            const username = document.getElementById("authUsername").value;
+            const password = document.getElementById("authPassword").value;
+            const res = await fetch(`http://localhost:8000${path}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password }),
+            });
+            const status = document.getElementById("authStatus");
+            if (!res.ok) {
+                const err = await res.json();
+                status.textContent = `Error: ${err.detail}`;
+                return;
+            }
+            const data = await res.json();
+            token = data.access_token;
+            status.textContent = `Logged in as ${username}. Token acquired.`;
+        }
 
         function connect() {
+            if (!token) {
+                alert("Register or log in first!");
+                return;
+            }
             const room = document.getElementById("room").value;
-            const username = document.getElementById("username").value;
-            ws = new WebSocket(`ws://localhost:8000/ws/${room}/${username}`);
+            ws = new WebSocket(`ws://localhost:8000/ws/${room}?token=${token}`);
 
             ws.onmessage = (event) => {
                 const messages = document.getElementById("messages");

@@ -17,8 +17,43 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            hashed_password TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
+
+
+def create_user(username: str, hashed_password: str) -> bool:
+    """Returns False if the username is already taken."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
+            (username, hashed_password),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def get_user(username: str) -> sqlite3.Row | None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT username, hashed_password FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    conn.close()
+    return row
 
 
 def save_message(room_id: str, username: str, content: str):
