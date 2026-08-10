@@ -1,6 +1,17 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-app = FastAPI()
+import database
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    database.init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 class ConnectionManager:
@@ -32,10 +43,16 @@ def health_check():
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     await manager.connect(websocket, room_id)
+
+    # send this room's recent history to the newly connected client only
+    for row in database.get_recent_messages(room_id):
+        await websocket.send_text(f"{row['username']}: {row['content']}")
+
     await manager.broadcast(f"{username} joined the room", room_id)
     try:
         while True:
             data = await websocket.receive_text()
+            database.save_message(room_id, username, data)
             await manager.broadcast(f"{username}: {data}", room_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
