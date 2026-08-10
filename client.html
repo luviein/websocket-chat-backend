@@ -171,34 +171,63 @@
             margin: 0;
         }
 
-        /* status dot picker */
+        /* presence panel: status picker sits to the side of the user grid */
+        .presence-layout {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
         .status-picker {
             display: flex;
+            flex-direction: column;
             gap: 0.5rem;
+            flex-shrink: 0;
+            border-right: 1px solid var(--border);
+            padding-right: 1rem;
         }
 
-        .dot-btn {
-            width: 1.6rem;
-            height: 1.6rem;
-            border-radius: 50%;
-            border: 2px solid transparent;
-            padding: 0;
+        .status-option {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 7px;
+            padding: 0.25rem 0.4rem;
             cursor: pointer;
+            font-size: 0.78rem;
+            color: var(--muted);
         }
 
-        .dot-btn[data-status="available"] { background: var(--available); }
-        .dot-btn[data-status="away"] { background: var(--away); }
-        .dot-btn[data-status="invisible"] { background: var(--invisible); }
-
-        .dot-btn.selected {
-            border-color: var(--text);
+        .status-option:hover {
+            background: var(--system-bg);
         }
+
+        .status-option.selected {
+            border-color: var(--border);
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        .status-option .dot-btn {
+            width: 0.8rem;
+            height: 0.8rem;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-option[data-status="available"] .dot-btn { background: var(--available); }
+        .status-option[data-status="away"] .dot-btn { background: var(--away); }
+        .status-option[data-status="invisible"] .dot-btn { background: var(--invisible); }
 
         /* online users grid */
         #userGrid {
+            flex: 1;
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
             gap: 0.5rem;
+            align-content: flex-start;
         }
 
         .user-chip {
@@ -266,17 +295,21 @@
         </div>
 
         <div class="panel">
-            <p class="panel-title">Your Status</p>
-            <div class="status-picker">
-                <button class="dot-btn" data-status="available" title="Available" onclick="setStatus('available')"></button>
-                <button class="dot-btn" data-status="away" title="Away" onclick="setStatus('away')"></button>
-                <button class="dot-btn" data-status="invisible" title="Invisible" onclick="setStatus('invisible')"></button>
-            </div>
-        </div>
-
-        <div class="panel">
             <p class="panel-title">Online Now</p>
-            <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
+            <div class="presence-layout">
+                <div class="status-picker">
+                    <button class="status-option" data-status="available" onclick="setStatus('available')">
+                        <span class="dot-btn"></span> Available
+                    </button>
+                    <button class="status-option" data-status="away" onclick="setStatus('away')">
+                        <span class="dot-btn"></span> Away
+                    </button>
+                    <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
+                        <span class="dot-btn"></span> Invisible
+                    </button>
+                </div>
+                <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
+            </div>
         </div>
 
         <div class="panel">
@@ -387,7 +420,7 @@
 
         function setStatus(status) {
             myStatus = status;
-            document.querySelectorAll(".dot-btn").forEach((btn) => {
+            document.querySelectorAll(".status-option").forEach((btn) => {
                 btn.classList.toggle("selected", btn.dataset.status === status);
             });
             if (ws && ws.readyState === WebSocket.OPEN) {
