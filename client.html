@@ -56,6 +56,32 @@
             display: none !important;
         }
 
+        /* view slide-fade transition */
+        .view-wrap {
+            position: relative;
+        }
+
+        .view {
+            transition: opacity 0.22s ease, transform 0.22s ease;
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .view.entering {
+            opacity: 0;
+            transform: translateX(16px);
+        }
+
+        .view.leaving {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            opacity: 0;
+            transform: translateX(-16px);
+            pointer-events: none;
+        }
+
         .panel {
             background: var(--panel);
             border: 1px solid var(--border);
@@ -299,64 +325,66 @@
             <p class="subtitle">Minimal test client for the WebSocket chat backend</p>
         </div>
 
-        <!-- View 1: Register / Log In -->
-        <div class="panel" id="authView">
-            <p class="panel-title">Register or Log In</p>
-            <div class="row">
-                <input id="authUsername" placeholder="username" value="user1" />
-                <input id="authPassword" type="password" placeholder="password" value="password123" />
-            </div>
-            <div class="row">
-                <button onclick="register()">Register</button>
-                <button class="secondary" onclick="login()">Log In</button>
-            </div>
-            <p id="authStatus" class="status">Not logged in.</p>
-        </div>
-
-        <!-- View 2: Join a Room -->
-        <div class="panel hidden" id="roomView">
-            <p class="panel-title">Join a Room</p>
-            <div class="row">
-                <input id="room" placeholder="room name" value="general" />
-                <button onclick="connect()">Connect</button>
-            </div>
-            <p id="connectStatus" class="status"></p>
-        </div>
-
-        <!-- View 3: Chat Room -->
-        <div class="hidden" id="chatView" style="display: flex; flex-direction: column; gap: 1rem;">
-            <div class="panel chat-header">
-                <span class="room-name">Room: <span id="currentRoomLabel"></span></span>
-                <div class="actions">
-                    <button class="secondary" onclick="changeRoom()">Change Room</button>
-                    <button class="secondary" onclick="logout()">Log Out</button>
+        <div class="view-wrap">
+            <!-- View 1: Register / Log In -->
+            <div class="panel view" id="authView">
+                <p class="panel-title">Register or Log In</p>
+                <div class="row">
+                    <input id="authUsername" placeholder="username" value="user1" />
+                    <input id="authPassword" type="password" placeholder="password" value="password123" />
                 </div>
+                <div class="row">
+                    <button onclick="register()">Register</button>
+                    <button class="secondary" onclick="login()">Log In</button>
+                </div>
+                <p id="authStatus" class="status">Not logged in.</p>
             </div>
 
-            <div class="panel">
-                <p class="panel-title">Online Now</p>
-                <div class="presence-layout">
-                    <div class="status-picker">
-                        <button class="status-option" data-status="available" onclick="setStatus('available')">
-                            <span class="dot-btn"></span> Available
-                        </button>
-                        <button class="status-option" data-status="away" onclick="setStatus('away')">
-                            <span class="dot-btn"></span> Away
-                        </button>
-                        <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
-                            <span class="dot-btn"></span> Invisible
-                        </button>
+            <!-- View 2: Join a Room -->
+            <div class="panel view hidden" id="roomView">
+                <p class="panel-title">Join a Room</p>
+                <div class="row">
+                    <input id="room" placeholder="room name" value="general" />
+                    <button onclick="connect()">Connect</button>
+                </div>
+                <p id="connectStatus" class="status"></p>
+            </div>
+
+            <!-- View 3: Chat Room -->
+            <div class="view hidden" id="chatView" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="panel chat-header">
+                    <span class="room-name">Room: <span id="currentRoomLabel"></span></span>
+                    <div class="actions">
+                        <button class="secondary" onclick="changeRoom()">Change Room</button>
+                        <button class="secondary" onclick="logout()">Log Out</button>
                     </div>
-                    <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
                 </div>
-            </div>
 
-            <div class="panel">
-                <p class="panel-title">Chat</p>
-                <ul id="messages"></ul>
-                <div class="send-row">
-                    <input id="messageInput" placeholder="Type a message and press Enter" />
-                    <button onclick="sendMessage()">Send</button>
+                <div class="panel">
+                    <p class="panel-title">Online Now</p>
+                    <div class="presence-layout">
+                        <div class="status-picker">
+                            <button class="status-option" data-status="available" onclick="setStatus('available')">
+                                <span class="dot-btn"></span> Available
+                            </button>
+                            <button class="status-option" data-status="away" onclick="setStatus('away')">
+                                <span class="dot-btn"></span> Away
+                            </button>
+                            <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
+                                <span class="dot-btn"></span> Invisible
+                            </button>
+                        </div>
+                        <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <p class="panel-title">Chat</p>
+                    <ul id="messages"></ul>
+                    <div class="send-row">
+                        <input id="messageInput" placeholder="Type a message and press Enter" />
+                        <button onclick="sendMessage()">Send</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -367,10 +395,33 @@
         let token = null;
         let myStatus = "available";
 
+        const views = {
+            auth: document.getElementById("authView"),
+            room: document.getElementById("roomView"),
+            chat: document.getElementById("chatView"),
+        };
+        const TRANSITION_MS = 220;
+
         function showView(view) {
-            document.getElementById("authView").classList.toggle("hidden", view !== "auth");
-            document.getElementById("roomView").classList.toggle("hidden", view !== "room");
-            document.getElementById("chatView").classList.toggle("hidden", view !== "chat");
+            const target = views[view];
+
+            const currentEntry = Object.entries(views).find(
+                ([name, el]) => name !== view && !el.classList.contains("hidden")
+            );
+
+            if (currentEntry) {
+                const currentEl = currentEntry[1];
+                currentEl.classList.add("leaving");
+                setTimeout(() => {
+                    currentEl.classList.remove("leaving");
+                    currentEl.classList.add("hidden");
+                }, TRANSITION_MS);
+            }
+
+            target.classList.remove("hidden");
+            target.classList.add("entering");
+            void target.offsetWidth; // force reflow so the transition animates from the "entering" state
+            target.classList.remove("entering");
         }
 
         async function register() {
