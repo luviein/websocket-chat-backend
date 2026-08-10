@@ -5,7 +5,11 @@
 </head>
 <body>
     <h2>Chat Test Client</h2>
-    <p>Username: <input id="username" value="user1" /> <button onclick="connect()">Connect</button></p>
+    <p>
+        Room: <input id="room" value="general" />
+        Username: <input id="username" value="user1" />
+        <button onclick="connect()">Connect</button>
+    </p>
     <input id="messageInput" placeholder="type a message" style="width: 300px;" />
     <button onclick="sendMessage()">Send</button>
     <ul id="messages"></ul>
@@ -14,8 +18,9 @@
         let ws = null;
 
         function connect() {
+            const room = document.getElementById("room").value;
             const username = document.getElementById("username").value;
-            ws = new WebSocket(`ws://localhost:8000/ws/${username}`);
+            ws = new WebSocket(`ws://localhost:8000/ws/${room}/${username}`);
 
             ws.onmessage = (event) => {
                 const messages = document.getElementById("messages");
