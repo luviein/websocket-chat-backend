@@ -132,7 +132,7 @@ def login(request: Request, credentials: UserCredentials):
 def serve_client():
     # serves the test client over http:// instead of file:// - needed so the
     # Google OAuth redirect below has a real URL to send the user back to
-    return FileResponse(Path(__file__).parent / "client.html")
+    return FileResponse(Path(__file__).parent / "static" / "client.html")
 
 
 @app.get("/auth/google/login")

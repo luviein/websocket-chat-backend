@@ -4,6 +4,26 @@
 
 A WebSocket-based chat backend built with FastAPI, for practicing real-time backend patterns.
 
+## Project Structure
+
+```
+chat-backend/
+├── main.py              # FastAPI app, routes, WebSocket endpoint
+├── auth.py               # password hashing, JWT create/decode
+├── database.py           # SQLite access (users, messages)
+├── oauth.py               # Google OAuth client setup
+├── static/
+│   └── client.html        # minimal test client (served at /client.html)
+├── tests/
+│   ├── conftest.py         # spins the server up/down for the test session
+│   ├── test_helpers.py     # shared test utilities
+│   └── test_*.py            # one file per feature area
+├── .github/workflows/tests.yml
+├── requirements.txt        # runtime dependencies
+├── requirements-dev.txt    # + test tooling
+└── .env.example
+```
+
 ## Setup
 
 ```
@@ -76,10 +96,14 @@ error instead of crashing). To enable it:
    be opened via `http://localhost:8000/client.html`, not `file://`, for the
    redirect back to work) will now walk through the real Google login flow.
 
-First-time Google sign-in creates an account using the user's Google email
-as their username, with no local password set (they can only sign in via
-Google afterward - a separate password-based registration with that same
-email is rejected to avoid silently merging two identities).
+First-time Google sign-in prompts the user to pick a **display name**
+(instead of just showing their raw email in chat) before finishing account
+creation - the pending email/google_id is held in a signed session cookie
+between the OAuth redirect and that submission. The account itself is keyed
+by the user's Google email with no local password set (they can only sign in
+via Google afterward - a separate password-based registration with that same
+email is rejected to avoid silently merging two identities). Returning users
+skip the prompt and go straight through.
 
 ## Message Protocol
 
@@ -97,6 +121,9 @@ Server -> client:
 {"type": "system", "content": "..."}
 {"type": "presence", "users": [{"username": "...", "status": "..."}]}
 ```
+
+Every `username` field here is the resolved **display name** (see the Google
+OAuth section above) - not necessarily the account's login identifier/email.
 
 `presence` is a full roster snapshot (not an incremental diff) sent to everyone
 in the room whenever someone joins, leaves, or changes their status - simplest

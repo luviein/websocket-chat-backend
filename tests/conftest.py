@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import requests
 
-ROOT = Path(__file__).parent
+# conftest.py now lives in tests/, but main.py (the app being tested) lives
+# one level up at the project root - that's where uvicorn needs to run from.
+ROOT = Path(__file__).parent.parent
 # Deliberately NOT port 8000 - that's the port a developer typically runs
 # their own local server on while testing client.html by hand. Using a
 # different port means the test suite always starts its own isolated
