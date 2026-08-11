@@ -129,14 +129,20 @@ Optional, same graceful-fallback pattern as Google OAuth - without a key,
 **Usage, from any chat room:**
 - Type `/invite-gemini` to add it to the room - it shows up in the "Online
   Now" grid like any other participant, and everyone in the room sees a
-  "Gemini has joined the room" notice.
+  "Gemini has joined the room" notice. Typing `/` or `@` in the message box
+  shows an autocomplete dropdown of matching commands/mentions, navigable
+  with arrow keys and Enter (or a click) - a UX layer on top of the same
+  server-side matching, not a separate protocol.
 - Once invited, any message starting with `@gemini` (e.g. `@gemini what does
   this backend do?`) gets sent to the Gemini API, and its reply is broadcast
   back into the room as a normal chat message from "Gemini" - saved to
   history like anything else. Messages that don't start with `@gemini` are
   never sent to Gemini at all, and rooms that never used `/invite-gemini`
-  ignore `@gemini` mentions completely (treated as plain text).
-- Gemini calls have a 15s timeout and always run off the server's main event
+  ignore `@gemini` mentions completely (treated as plain text). After
+  sending an `@gemini` message, the input refills with `@gemini ` for the
+  next message too, so a back-and-forth conversation doesn't need retyping
+  the mention every time - delete it manually to go back to a normal message.
+- Gemini calls have a 30s timeout and always run off the server's main event
   loop (on a worker thread) - a slow or failed call can't freeze the rest of
   the server for other connections.
 
@@ -178,15 +184,27 @@ might already have running for `client.html`. Same command runs in CI on
 every push (see the badge above).
 
 The Gemini tests never call the real API - `conftest.py` passes the test
-server a deliberately fake key, which reliably fails and exercises the full
-invite/mention flow without real network calls, cost, or flakiness.
-`pytest-timeout` (60s default, see `pytest.ini`) is a safety net from
-learning this the hard way: an early version of the Gemini integration
-blocked the *entire* server's event loop on a slow API call, hanging every
-other connection - not just the one that triggered it - until the call gave
-up on its own. `asyncio.wait_for` alone didn't fix it (cancellation only
-works at a cooperative yield point, and the blocking call never yielded
-one); moving the call onto a worker thread via `asyncio.to_thread` did.
+server a deliberately fake key *and* points `GEMINI_BASE_URL` at an
+unreachable local address (`http://127.0.0.1:1`), so the invite/mention flow
+is tested end-to-end with a failure that's instant and 100% deterministic,
+independent of Google's real servers, network conditions, or which model
+`GEMINI_MODEL` happens to resolve to.
+
+`pytest-timeout` (60s default, `timeout_method = thread`, see `pytest.ini`)
+is a safety net from learning this the hard way: an early version of the
+Gemini integration blocked the *entire* server's event loop on a slow API
+call, hanging every other connection - not just the one that triggered it -
+until the call gave up on its own. `asyncio.wait_for` alone didn't fix it
+(cancellation only works at a cooperative yield point, and the blocking call
+never yielded one); moving the call onto a worker thread via
+`asyncio.to_thread` did.
+
+Also worth knowing if a test only fails in CI: `conftest.py` explicitly adds
+the project root to `sys.path`, since `python -m pytest` (used in every
+local run here) implicitly does this, but CI's plain `pytest -v` doesn't -
+without it, root-level module imports (`import gemini`, etc.) work locally
+and fail in CI with a `ModuleNotFoundError`, for reasons that don't reproduce
+outside CI's exact invocation.
 
 ## Known limitations (by design, for a practice project)
 
