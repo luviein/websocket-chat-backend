@@ -205,3 +205,5 @@ one); moving the call onto a worker thread via `asyncio.to_thread` did.
 - [x] Google OAuth login, alongside the existing password-based accounts
 - [x] AI bot: `/invite-gemini` + `@gemini` mentions, backed by the Gemini API
 - [ ] Stretch: typing indicators, private DMs
+
+<img width="669" height="824" alt="image" src="https://github.com/user-attachments/assets/2235c011-142f-4b31-b78e-0610deda0c62" />
