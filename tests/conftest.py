@@ -47,9 +47,15 @@ def server(tmp_path_factory):
     # would otherwise leak it in here, since auth.py's load_dotenv() runs
     # inside the server subprocess). This makes Gemini "enabled" so the
     # invite/mention flow is testable end-to-end, while guaranteeing every
-    # actual API call fails - so tests never hit real Gemini quota, cost
-    # nothing, and aren't flaky due to network/model response variance.
+    # actual API call fails - so tests never hit real Gemini quota or cost.
     env["GEMINI_API_KEY"] = "fake-test-key-for-deterministic-testing"
+    # Point at an address nothing listens on, instead of letting the fake
+    # key hit Google's real servers - learned the hard way that how fast
+    # Google rejects a bad key varies a lot (sometimes ~instant, sometimes
+    # slow enough to look like a hang), which made the suite flaky. Failing
+    # against a local, non-routable address is instant and 100% deterministic
+    # regardless of network conditions or which model GEMINI_MODEL resolves to.
+    env["GEMINI_BASE_URL"] = "http://127.0.0.1:1"
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--port", str(TEST_PORT)],

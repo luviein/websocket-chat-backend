@@ -118,17 +118,16 @@ async def test_mention_gemini_triggers_a_response(server):
             "content": "@gemini what is this project?",
         }
 
-        # fake API key guarantees the call can't succeed, but whether it
-        # fails fast (auth error) or hangs until gemini.py's own timeout
-        # fires depends on the SDK's internal retry behavior - either way,
-        # this proves the whole trigger path works end-to-end
+        # conftest.py points GEMINI_BASE_URL at an unreachable local address,
+        # so this fails the same deterministic way every time (a connection
+        # error, not a timeout) - proves the whole trigger path works
+        # end-to-end without depending on Google's real servers at all
         gemini_reply = await recv_json(ws)
-        assert gemini_reply["type"] == "chat"
-        assert gemini_reply["username"] == "Gemini"
-        assert gemini_reply["content"] in (
-            "Sorry, I ran into an error trying to respond.",
-            "Sorry, Gemini took too long to respond.",
-        ), gemini_reply
+        assert gemini_reply == {
+            "type": "chat",
+            "username": "Gemini",
+            "content": "Sorry, I ran into an error trying to respond.",
+        }
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ import logging
 import os
 
 from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -11,16 +12,40 @@ INVITE_COMMAND = "/invite-gemini"
 MENTION_PREFIX = "@gemini"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+# "latest" alias, not a pinned version - a pinned model (e.g. gemini-2.0-flash,
+# this project's original default) can and did get deprecated/removed by
+# Google mid-project, breaking every call with a 404. The alias always
+# points at Google's current recommended fast/cheap model instead.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 # The SDK doesn't fail fast on its own (e.g. an invalid key can hang far
 # longer than expected, apparently retrying internally) - a hard timeout
 # here matters for more than just tests: a slow/unresponsive Gemini call
 # would otherwise block this WebSocket connection's message loop indefinitely.
-GEMINI_TIMEOUT_SECONDS = 15
+# 30s, not something tighter: real-world testing showed longer/more
+# open-ended prompts can legitimately take longer than 15s to generate,
+# not just failures - too tight a timeout just trades "hangs" for
+# "annoyingly frequent false timeouts" on normal use.
+GEMINI_TIMEOUT_SECONDS = 30
+
+# Test-only override so the test suite never depends on Google's real
+# servers even for the "failure" path - see tests/conftest.py. Pointing at
+# an address nothing listens on fails instantly and locally, instead of
+# depending on how fast/slow Google's servers happen to reject a fake key
+# on any given run (observed to vary a lot in practice).
+GEMINI_BASE_URL = os.environ.get("GEMINI_BASE_URL")
 
 GEMINI_ENABLED = bool(GEMINI_API_KEY)
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_ENABLED else None
+if GEMINI_ENABLED:
+    http_options = types.HttpOptions(
+        base_url=GEMINI_BASE_URL,
+        # we already enforce our own timeout+worker-thread handling above;
+        # the SDK's own retries just add unpredictable extra delay on top
+        retry_options=types.HttpRetryOptions(attempts=1),
+    )
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
+else:
+    gemini_client = None
 
 
 def _generate_sync(prompt: str):

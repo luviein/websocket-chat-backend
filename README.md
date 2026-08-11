@@ -117,8 +117,13 @@ Optional, same graceful-fallback pattern as Google OAuth - without a key,
 2. Add it to your local `.env`:
    ```
    GEMINI_API_KEY=your-key-here
-   GEMINI_MODEL=gemini-2.0-flash   # optional, this is already the default
+   GEMINI_MODEL=gemini-flash-latest   # optional, this is already the default
    ```
+   `GEMINI_MODEL` uses Google's "latest" alias rather than a pinned version on
+   purpose - a pinned model ID (e.g. the original default here,
+   `gemini-2.0-flash`) can and did get deprecated/removed by Google mid-project,
+   breaking every call with a 404. Override this only if you specifically need
+   a fixed model version.
 3. Restart the server.
 
 **Usage, from any chat room:**
