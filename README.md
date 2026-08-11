@@ -242,4 +242,5 @@ outside CI's exact invocation.
 - [x] Typing indicators: "X is typing..." for users, "Gemini is typing..." while an AI reply is in flight
 - [ ] Stretch: private DMs
 
-<img width="669" height="824" alt="image" src="https://github.com/user-attachments/assets/2235c011-142f-4b31-b78e-0610deda0c62" />
+<img width="984" height="865" alt="image" src="https://github.com/user-attachments/assets/86967f43-cea6-4e3c-8f27-28dc5d51f0a1" />
+
