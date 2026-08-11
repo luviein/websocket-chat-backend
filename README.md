@@ -12,6 +12,7 @@ chat-backend/
 ├── auth.py               # password hashing, JWT create/decode
 ├── database.py           # SQLite access (users, messages)
 ├── oauth.py               # Google OAuth client setup
+├── gemini.py               # /invite-gemini chat bot
 ├── static/
 │   └── client.html        # minimal test client (served at /client.html)
 ├── tests/
@@ -105,6 +106,35 @@ via Google afterward - a separate password-based registration with that same
 email is rejected to avoid silently merging two identities). Returning users
 skip the prompt and go straight through.
 
+### AI Bot ("/invite-gemini")
+
+Optional, same graceful-fallback pattern as Google OAuth - without a key,
+`/invite-gemini` just replies with a clear in-chat message instead of crashing.
+
+1. Go to [Google AI Studio](https://aistudio.google.com/), sign in, and click
+   **Get API key > Create API key**. Free tier, no credit card needed (exact
+   rate limits are shown there and change over time, so not quoted here).
+2. Add it to your local `.env`:
+   ```
+   GEMINI_API_KEY=your-key-here
+   GEMINI_MODEL=gemini-2.0-flash   # optional, this is already the default
+   ```
+3. Restart the server.
+
+**Usage, from any chat room:**
+- Type `/invite-gemini` to add it to the room - it shows up in the "Online
+  Now" grid like any other participant, and everyone in the room sees a
+  "Gemini has joined the room" notice.
+- Once invited, any message starting with `@gemini` (e.g. `@gemini what does
+  this backend do?`) gets sent to the Gemini API, and its reply is broadcast
+  back into the room as a normal chat message from "Gemini" - saved to
+  history like anything else. Messages that don't start with `@gemini` are
+  never sent to Gemini at all, and rooms that never used `/invite-gemini`
+  ignore `@gemini` mentions completely (treated as plain text).
+- Gemini calls have a 15s timeout and always run off the server's main event
+  loop (on a worker thread) - a slow or failed call can't freeze the rest of
+  the server for other connections.
+
 ## Message Protocol
 
 All WebSocket messages are JSON. Client -> server:
@@ -142,6 +172,17 @@ manual server startup needed, and it won't collide with a dev server you
 might already have running for `client.html`. Same command runs in CI on
 every push (see the badge above).
 
+The Gemini tests never call the real API - `conftest.py` passes the test
+server a deliberately fake key, which reliably fails and exercises the full
+invite/mention flow without real network calls, cost, or flakiness.
+`pytest-timeout` (60s default, see `pytest.ini`) is a safety net from
+learning this the hard way: an early version of the Gemini integration
+blocked the *entire* server's event loop on a slow API call, hanging every
+other connection - not just the one that triggered it - until the call gave
+up on its own. `asyncio.wait_for` alone didn't fix it (cancellation only
+works at a cooperative yield point, and the blocking call never yielded
+one); moving the call onto a worker thread via `asyncio.to_thread` did.
+
 ## Known limitations (by design, for a practice project)
 
 - `ConnectionManager` state is in-memory in a single process - this can't
@@ -162,4 +203,5 @@ every push (see the badge above).
 - [x] Presence status: online-users grid with user-settable status (available/away/invisible)
 - [x] Hardening pass: fixed a stored-XSS bug, env-var secret key, password validation, rate limiting, pytest + CI
 - [x] Google OAuth login, alongside the existing password-based accounts
+- [x] AI bot: `/invite-gemini` + `@gemini` mentions, backed by the Gemini API
 - [ ] Stretch: typing indicators, private DMs

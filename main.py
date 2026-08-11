@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import auth
 import database
+import gemini
 from oauth import GOOGLE_OAUTH_ENABLED, oauth_client
 
 VALID_STATUSES = {"available", "away", "invisible"}
@@ -55,6 +56,8 @@ class ConnectionManager:
     def __init__(self):
         # room_id -> {websocket: {"username": str, "status": str}}
         self.rooms: dict[str, dict[WebSocket, dict]] = {}
+        # room_ids that have had "/invite-gemini" used in them
+        self.gemini_rooms: set[str] = set()
 
     async def connect(self, websocket: WebSocket, room_id: str, username: str):
         await websocket.accept()
@@ -67,6 +70,9 @@ class ConnectionManager:
         del self.rooms[room_id][websocket]
         if not self.rooms[room_id]:
             del self.rooms[room_id]
+            # room is now empty - don't let Gemini's membership linger for
+            # whoever happens to start a new conversation in this room_id later
+            self.gemini_rooms.discard(room_id)
 
     def set_status(self, websocket: WebSocket, room_id: str, status: str):
         self.rooms[room_id][websocket]["status"] = status
@@ -75,11 +81,20 @@ class ConnectionManager:
         for connection in self.rooms.get(room_id, {}):
             await connection.send_json(message)
 
+    def invite_gemini(self, room_id: str):
+        self.gemini_rooms.add(room_id)
+
+    def is_gemini_active(self, room_id: str) -> bool:
+        return room_id in self.gemini_rooms
+
     def presence_snapshot(self, room_id: str) -> list[dict]:
-        return [
+        users = [
             {"username": info["username"], "status": info["status"]}
             for info in self.rooms.get(room_id, {}).values()
         ]
+        if room_id in self.gemini_rooms:
+            users.append({"username": gemini.BOT_NAME, "status": "available"})
+        return users
 
 
 manager = ConnectionManager()
@@ -242,10 +257,39 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
             if msg_type == "chat":
                 content = data.get("content", "")
+
+                if content.strip().lower() == gemini.INVITE_COMMAND:
+                    if not gemini.GEMINI_ENABLED:
+                        await websocket.send_json({
+                            "type": "system",
+                            "content": "Gemini isn't configured on this server (missing GEMINI_API_KEY).",
+                        })
+                    elif manager.is_gemini_active(room_id):
+                        await websocket.send_json(
+                            {"type": "system", "content": "Gemini is already in this room."}
+                        )
+                    else:
+                        manager.invite_gemini(room_id)
+                        await manager.broadcast(
+                            {"type": "system", "content": f"{gemini.BOT_NAME} has joined the room"}, room_id
+                        )
+                        await broadcast_presence(room_id)
+                    continue  # don't save/broadcast the command as a normal chat message
+
                 database.save_message(room_id, display_name, content)
                 await manager.broadcast(
                     {"type": "chat", "username": display_name, "content": content}, room_id
                 )
+
+                if manager.is_gemini_active(room_id) and content.strip().lower().startswith(
+                    gemini.MENTION_PREFIX
+                ):
+                    prompt = content.strip()[len(gemini.MENTION_PREFIX):].strip()
+                    reply = await gemini.ask_gemini(prompt)
+                    database.save_message(room_id, gemini.BOT_NAME, reply)
+                    await manager.broadcast(
+                        {"type": "chat", "username": gemini.BOT_NAME, "content": reply}, room_id
+                    )
 
             elif msg_type == "set_status":
                 status = data.get("status")

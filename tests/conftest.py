@@ -43,6 +43,13 @@ def server(tmp_path_factory):
     # anything a real single client would hit, instead of disabling them
     env["REGISTER_RATE_LIMIT"] = "1000/minute"
     env["LOGIN_RATE_LIMIT"] = "1000/minute"
+    # Deliberately fake, not the real key from a local .env (os.environ.copy()
+    # would otherwise leak it in here, since auth.py's load_dotenv() runs
+    # inside the server subprocess). This makes Gemini "enabled" so the
+    # invite/mention flow is testable end-to-end, while guaranteeing every
+    # actual API call fails - so tests never hit real Gemini quota, cost
+    # nothing, and aren't flaky due to network/model response variance.
+    env["GEMINI_API_KEY"] = "fake-test-key-for-deterministic-testing"
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--port", str(TEST_PORT)],

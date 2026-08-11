@@ -182,6 +182,13 @@
             margin: 0.6rem 0 0;
         }
 
+        code {
+            background: var(--system-bg);
+            padding: 0.1rem 0.35rem;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+
         .status.error {
             color: #c0392b;
         }
@@ -428,6 +435,9 @@
 
                 <div class="panel">
                     <p class="panel-title">Chat</p>
+                    <p class="status" style="margin: 0 0 0.6rem;">
+                        Type <code>/invite-gemini</code> to add Gemini to this room, then mention it with <code>@gemini your question</code>.
+                    </p>
                     <ul id="messages"></ul>
                     <div class="send-row">
                         <input id="messageInput" placeholder="Type a message and press Enter" />
