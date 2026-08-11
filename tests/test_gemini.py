@@ -118,6 +118,9 @@ async def test_mention_gemini_triggers_a_response(server):
             "content": "@gemini what is this project?",
         }
 
+        typing_notice = await recv_json(ws)
+        assert typing_notice == {"type": "gemini_typing"}
+
         # conftest.py points GEMINI_BASE_URL at an unreachable local address,
         # so this fails the same deterministic way every time (a connection
         # error, not a timeout) - proves the whole trigger path works

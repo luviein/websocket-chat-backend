@@ -77,8 +77,10 @@ class ConnectionManager:
     def set_status(self, websocket: WebSocket, room_id: str, status: str):
         self.rooms[room_id][websocket]["status"] = status
 
-    async def broadcast(self, message: dict, room_id: str):
+    async def broadcast(self, message: dict, room_id: str, exclude: WebSocket | None = None):
         for connection in self.rooms.get(room_id, {}):
+            if connection is exclude:
+                continue
             await connection.send_json(message)
 
     def invite_gemini(self, room_id: str):
@@ -285,11 +287,25 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
                     gemini.MENTION_PREFIX
                 ):
                     prompt = content.strip()[len(gemini.MENTION_PREFIX):].strip()
+                    # lets clients show a "Gemini is typing..." indicator
+                    # while the (possibly 30s-long) API call is in flight,
+                    # instead of a silent gap that looks like nothing is
+                    # happening
+                    await manager.broadcast({"type": "gemini_typing"}, room_id)
                     reply = await gemini.ask_gemini(prompt)
                     database.save_message(room_id, gemini.BOT_NAME, reply)
                     await manager.broadcast(
                         {"type": "chat", "username": gemini.BOT_NAME, "content": reply}, room_id
                     )
+
+            elif msg_type == "typing":
+                # no server-side "stopped typing" tracking/broadcast - kept
+                # deliberately simple, clients auto-expire the indicator if
+                # no further "typing" signal arrives for a few seconds.
+                # excludes the sender - you already know you're typing.
+                await manager.broadcast(
+                    {"type": "typing", "username": display_name}, room_id, exclude=websocket
+                )
 
             elif msg_type == "set_status":
                 status = data.get("status")

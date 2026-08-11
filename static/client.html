@@ -34,7 +34,7 @@
 
         .app {
             width: 100%;
-            max-width: 480px;
+            max-width: 760px;
             display: flex;
             flex-direction: column;
             gap: 1rem;
@@ -224,7 +224,7 @@
             list-style: none;
             margin: 0;
             padding: 0;
-            height: 320px;
+            height: 420px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -444,7 +444,7 @@
                 <p class="panel-title">Join a Room</p>
                 <div class="row">
                     <input id="room" placeholder="room name" value="general" />
-                    <button onclick="connect()">Connect</button>
+                    <button id="connectBtn" onclick="connect()">Connect</button>
                 </div>
                 <p id="connectStatus" class="status"></p>
             </div>
@@ -483,6 +483,7 @@
                         Type <code>/invite-gemini</code> to add Gemini to this room, then mention it with <code>@gemini your question</code>.
                     </p>
                     <ul id="messages"></ul>
+                    <p id="typingIndicator" class="status hidden" style="margin: 0.4rem 0 0; min-height: 1em;"></p>
                     <div class="send-wrap">
                         <ul id="autocompleteDropdown" class="autocomplete-dropdown hidden"></ul>
                         <div class="send-row">
@@ -572,32 +573,58 @@
         }
 
         function connect() {
+            // guards against the double/triple-click case where a second
+            // click fires before the first WebSocket has finished opening,
+            // which used to open extra duplicate connections for the same user
+            if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+                return;
+            }
+
+            const connectBtn = document.getElementById("connectBtn");
             const connectStatus = document.getElementById("connectStatus");
             const room = document.getElementById("room").value;
+
+            connectBtn.disabled = true;
+            connectStatus.textContent = "Connecting...";
+            connectStatus.className = "status";
+
             ws = new WebSocket(`${WS_BASE}/ws/${room}?token=${token}`);
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 if (msg.type === "chat") {
-                    addMessage(`${msg.username}: ${msg.content}`, false);
+                    addChatMessage(msg.username, msg.content);
+                    // whoever this message is from is done "typing" - clears
+                    // the indicator immediately instead of waiting out the
+                    // expiry timer, and covers Gemini's reply arriving too
+                    clearUserTyping(msg.username);
+                    if (msg.username === GEMINI_BOT_NAME) clearGeminiTyping();
                 } else if (msg.type === "system") {
                     addMessage(msg.content, true);
                 } else if (msg.type === "presence") {
                     renderUserGrid(msg.users);
+                } else if (msg.type === "typing") {
+                    showUserTyping(msg.username);
+                } else if (msg.type === "gemini_typing") {
+                    showGeminiTyping();
                 }
             };
 
             ws.onopen = () => {
+                connectBtn.disabled = false; // reset for next time this view is shown
                 document.getElementById("currentRoomLabel").textContent = room;
                 document.getElementById("messages").innerHTML = "";
+                resetTypingState();
                 showView("chat");
                 setStatus(myStatus); // announce current status once connected
             };
 
             ws.onclose = () => {
+                connectBtn.disabled = false;
                 connectStatus.textContent = "Disconnected.";
                 connectStatus.className = "status error";
                 renderUserGrid([]);
+                resetTypingState();
             };
         }
 
@@ -608,6 +635,7 @@
                 ws = null;
             }
             document.getElementById("connectStatus").textContent = "";
+            resetTypingState();
             showView("room");
         }
 
@@ -621,6 +649,7 @@
             document.getElementById("authPassword").value = "";
             document.getElementById("authStatus").textContent = "";
             document.getElementById("authStatus").className = "status";
+            resetTypingState();
             showView("auth");
         }
 
@@ -629,6 +658,32 @@
             const li = document.createElement("li");
             li.textContent = text;
             if (isSystem) li.classList.add("system");
+            messages.appendChild(li);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // A tiny, safe subset of markdown - enough for Gemini's replies (bold,
+        // headers, inline code, line breaks) to render instead of showing raw
+        // "**"/"###" characters. Safe against XSS because escapeHtml() runs
+        // FIRST, so every substitution below only ever wraps already-escaped
+        // text in known-safe tags - it never re-interprets user input as HTML.
+        function renderMarkdownLite(text) {
+            let html = escapeHtml(text);
+            html = html.replace(/^#{1,6}\s+(.*)$/gm, "<strong>$1</strong>"); // headers -> bold line
+            html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); // **bold** (before italic below)
+            html = html.replace(/\*(.+?)\*/g, "<em>$1</em>"); // *italic*
+            html = html.replace(/`([^`]+)`/g, "<code>$1</code>"); // `code`
+            return html.replace(/\n/g, "<br>");
+        }
+
+        function addChatMessage(username, content) {
+            const messages = document.getElementById("messages");
+            const li = document.createElement("li");
+            li.innerHTML = `<strong>${escapeHtml(username)}:</strong> ${renderMarkdownLite(content)}`;
             messages.appendChild(li);
             messages.scrollTop = messages.scrollHeight;
         }
@@ -667,6 +722,93 @@
             }
         }
 
+        // "Gemini" matches gemini.BOT_NAME server-side - used to recognize
+        // its reply (to clear the "Gemini is typing..." indicator) since the
+        // client has no direct access to the Python constant.
+        const GEMINI_BOT_NAME = "Gemini";
+
+        const typingIndicatorEl = document.getElementById("typingIndicator");
+        // username -> expiry timeout id. No explicit "stopped typing" message
+        // exists server-side, so a user's entry just expires on its own if no
+        // further "typing" signal arrives in time.
+        let typingTimers = {};
+        let geminiTypingTimer = null;
+        const TYPING_EXPIRY_MS = 4000;
+        // Safety net matching the server's 30s Gemini timeout, in case a
+        // reply is somehow never broadcast (e.g. a dropped connection) and
+        // the indicator would otherwise stick around forever.
+        const GEMINI_TYPING_FALLBACK_MS = 35000;
+
+        function updateTypingIndicatorText() {
+            const parts = [];
+            if (geminiTypingTimer !== null) parts.push("Gemini is typing");
+            const typingUsernames = Object.keys(typingTimers);
+            if (typingUsernames.length > 0) {
+                parts.push(`${typingUsernames.join(", ")} ${typingUsernames.length === 1 ? "is" : "are"} typing`);
+            }
+            if (parts.length === 0) {
+                typingIndicatorEl.classList.add("hidden");
+                typingIndicatorEl.textContent = "";
+            } else {
+                typingIndicatorEl.classList.remove("hidden");
+                typingIndicatorEl.textContent = parts.join(" · ") + "...";
+            }
+        }
+
+        function showUserTyping(username) {
+            if (typingTimers[username]) clearTimeout(typingTimers[username]);
+            typingTimers[username] = setTimeout(() => {
+                delete typingTimers[username];
+                updateTypingIndicatorText();
+            }, TYPING_EXPIRY_MS);
+            updateTypingIndicatorText();
+        }
+
+        function clearUserTyping(username) {
+            if (typingTimers[username]) {
+                clearTimeout(typingTimers[username]);
+                delete typingTimers[username];
+                updateTypingIndicatorText();
+            }
+        }
+
+        function showGeminiTyping() {
+            if (geminiTypingTimer) clearTimeout(geminiTypingTimer);
+            geminiTypingTimer = setTimeout(() => {
+                geminiTypingTimer = null;
+                updateTypingIndicatorText();
+            }, GEMINI_TYPING_FALLBACK_MS);
+            updateTypingIndicatorText();
+        }
+
+        function clearGeminiTyping() {
+            if (geminiTypingTimer) {
+                clearTimeout(geminiTypingTimer);
+                geminiTypingTimer = null;
+                updateTypingIndicatorText();
+            }
+        }
+
+        function resetTypingState() {
+            Object.values(typingTimers).forEach(clearTimeout);
+            typingTimers = {};
+            clearGeminiTyping();
+            updateTypingIndicatorText();
+        }
+
+        // throttled, not sent on every keystroke - the exact cadence doesn't
+        // matter much since receivers auto-expire the indicator anyway
+        const TYPING_SEND_THROTTLE_MS = 2000;
+        let lastTypingSentAt = 0;
+
+        function sendTypingSignal() {
+            if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+            const now = Date.now();
+            if (now - lastTypingSentAt < TYPING_SEND_THROTTLE_MS) return;
+            lastTypingSentAt = now;
+            ws.send(JSON.stringify({ type: "typing" }));
+        }
+
         function sendMessage() {
             const input = document.getElementById("messageInput");
             const content = input.value;
@@ -680,6 +822,7 @@
                 // the dropdown needs an explicit refresh or it'd show stale
                 // matches for whatever was being typed before sending
                 closeAutocomplete();
+                lastTypingSentAt = 0; // let the next keystroke signal typing right away, unthrottled
             }
         }
 
@@ -765,6 +908,7 @@
             autocompleteMatches = getAutocompleteMatches(messageInputEl.value);
             autocompleteIndex = autocompleteMatches.length > 0 ? 0 : -1;
             renderAutocomplete();
+            sendTypingSignal();
         });
 
         messageInputEl.addEventListener("keydown", (e) => {

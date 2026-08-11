@@ -153,6 +153,7 @@ All WebSocket messages are JSON. Client -> server:
 ```json
 {"type": "chat", "content": "hello"}
 {"type": "set_status", "status": "available" | "away" | "invisible"}
+{"type": "typing"}
 ```
 
 Server -> client:
@@ -161,6 +162,8 @@ Server -> client:
 {"type": "chat", "username": "...", "content": "..."}
 {"type": "system", "content": "..."}
 {"type": "presence", "users": [{"username": "...", "status": "..."}]}
+{"type": "typing", "username": "..."}
+{"type": "gemini_typing"}
 ```
 
 Every `username` field here is the resolved **display name** (see the Google
@@ -170,6 +173,15 @@ OAuth section above) - not necessarily the account's login identifier/email.
 in the room whenever someone joins, leaves, or changes their status - simplest
 for clients to render since they can just replace their whole user grid each
 time instead of tracking adds/removes themselves.
+
+`typing` has no explicit "stopped typing" counterpart in either direction -
+the client throttles how often it sends one while the user types, and
+whoever receives it just auto-expires the "X is typing..." indicator a few
+seconds after the last one arrives (or immediately, once that user's actual
+chat message shows up). `gemini_typing` is broadcast right before the
+(possibly 30s-long) Gemini API call starts, so the room sees "Gemini is
+typing..." instead of a silent gap; it's cleared once Gemini's `chat` reply
+arrives.
 
 ## Tests
 
@@ -227,6 +239,7 @@ outside CI's exact invocation.
 - [x] Hardening pass: fixed a stored-XSS bug, env-var secret key, password validation, rate limiting, pytest + CI
 - [x] Google OAuth login, alongside the existing password-based accounts
 - [x] AI bot: `/invite-gemini` + `@gemini` mentions, backed by the Gemini API
-- [ ] Stretch: typing indicators, private DMs
+- [x] Typing indicators: "X is typing..." for users, "Gemini is typing..." while an AI reply is in flight
+- [ ] Stretch: private DMs
 
 <img width="669" height="824" alt="image" src="https://github.com/user-attachments/assets/2235c011-142f-4b31-b78e-0610deda0c62" />
