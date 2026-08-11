@@ -10,6 +10,15 @@ import requests
 # conftest.py now lives in tests/, but main.py (the app being tested) lives
 # one level up at the project root - that's where uvicorn needs to run from.
 ROOT = Path(__file__).parent.parent
+
+# Root-level modules (gemini.py, etc.) need to be importable from test files
+# (e.g. test_gemini.py's "import gemini"). `python -m pytest` adds the
+# current directory to sys.path automatically, which is why this worked in
+# every local run - but CI's plain `pytest -v` does not get that same
+# treatment, so it failed with ModuleNotFoundError there despite passing
+# consistently on every local run. Adding it explicitly here makes behavior
+# consistent regardless of how pytest is invoked.
+sys.path.insert(0, str(ROOT))
 # Deliberately NOT port 8000 - that's the port a developer typically runs
 # their own local server on while testing client.html by hand. Using a
 # different port means the test suite always starts its own isolated
