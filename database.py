@@ -34,12 +34,39 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS blocks (
+            blocker TEXT NOT NULL,
+            blocked TEXT NOT NULL,
+            PRIMARY KEY (blocker, blocked)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
 
+def is_display_name_taken(display_name: str) -> bool:
+    """Password accounts use their own username as their effective display
+    name (see get_display_name), so this checks both columns - needed so
+    DMs and blocking (which address people by display name) always have an
+    unambiguous target, since two different accounts showing up as the same
+    name in chat would make both features silently misroute."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT 1 FROM users WHERE username = ? OR display_name = ? LIMIT 1",
+        (display_name, display_name),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def create_user(username: str, hashed_password: str) -> bool:
-    """Returns False if the username is already taken."""
+    """Returns False if the username is already taken, either literally or
+    as another account's chosen display name (see is_display_name_taken)."""
+    if is_display_name_taken(username):
+        return False
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
@@ -55,7 +82,11 @@ def create_user(username: str, hashed_password: str) -> bool:
 
 
 def create_google_user(username: str, google_id: str, display_name: str) -> bool:
-    """Returns False if the username is already taken (e.g. by a password account)."""
+    """Returns False if the account's username is already taken, or the
+    chosen display_name collides with another account (see
+    is_display_name_taken)."""
+    if is_display_name_taken(display_name):
+        return False
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
@@ -122,3 +153,49 @@ def get_recent_messages(room_id: str, limit: int = 50) -> list[sqlite3.Row]:
     ).fetchall()
     conn.close()
     return list(reversed(rows))  # oldest first, for correct chat order
+
+
+def block_user(blocker: str, blocked: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT OR IGNORE INTO blocks (blocker, blocked) VALUES (?, ?)",
+        (blocker, blocked),
+    )
+    conn.commit()
+    conn.close()
+
+
+def unblock_user(blocker: str, blocked: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM blocks WHERE blocker = ? AND blocked = ?", (blocker, blocked))
+    conn.commit()
+    conn.close()
+
+
+def get_blocked_users(blocker: str) -> list[str]:
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT blocked FROM blocks WHERE blocker = ?", (blocker,)).fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+
+def get_blockers_of(username: str) -> list[str]:
+    """Who has blocked this username - used to silently withhold their
+    messages in shared group rooms from those specific people, without
+    restricting the sender themselves in any way (they keep posting/seeing
+    the room normally, same as Discord-style blocking)."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT blocker FROM blocks WHERE blocked = ?", (username,)).fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+
+def is_blocked_pair(user_a: str, user_b: str) -> bool:
+    """True if either user has blocked the other."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?) LIMIT 1",
+        (user_a, user_b, user_b, user_a),
+    ).fetchone()
+    conn.close()
+    return row is not None

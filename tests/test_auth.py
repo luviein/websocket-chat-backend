@@ -8,6 +8,32 @@ import websockets
 from test_helpers import ws_url
 
 
+@pytest.fixture
+def isolated_db(tmp_path, monkeypatch):
+    """A throwaway database for tests that call database.py's functions
+    directly, in-process - separate from the `server` fixture's subprocess
+    (and its own throwaway DB), and never the real local dev chat.db."""
+    import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "unit_test.db")
+    database.init_db()
+    return database
+
+
+def test_display_name_collision_across_account_types_rejected(isolated_db):
+    # a password account's username doubles as its display name
+    assert isolated_db.create_user("alice", "hashed-pw") is True
+    # a Google account choosing "alice" as its display name would collide
+    # with that existing password account - DMs/blocking need this to be
+    # impossible, since both address people by display name
+    assert isolated_db.create_google_user("alice@gmail.com", "google-id-1", "alice") is False
+    # a distinct display name is fine
+    assert isolated_db.create_google_user("bob@gmail.com", "google-id-2", "bob") is True
+    # and a new password registration can't take "bob" either, now that a
+    # Google account is already displaying as "bob"
+    assert isolated_db.create_user("bob", "hashed-pw-2") is False
+
+
 def register(server, username, password):
     return requests.post(f"{server}/register", json={"username": username, "password": password})
 
@@ -70,6 +96,8 @@ async def test_websocket_uses_real_username_from_token(server):
 
     room = f"auth-test-{uuid.uuid4().hex[:8]}"
     async with websockets.connect(ws_url(server, room, token)) as ws:
+        await ws.recv()  # self
+        await ws.recv()  # block_list
         # server should broadcast using the REAL username decoded from the token,
         # even though the client never sent a username anywhere
         joined_msg = json.loads(await ws.recv())

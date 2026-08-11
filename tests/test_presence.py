@@ -28,6 +28,8 @@ async def test_presence_snapshot_updates_through_join_and_leave(server):
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws_alice:
         # alice joins alone - presence snapshot should list just herself
+        await recv_json(ws_alice)  # self
+        await recv_json(ws_alice)  # block_list
         await recv_json(ws_alice)  # system: "alice joined the room"
         alice_roster = await recv_until_presence(ws_alice)
         assert [u["username"] for u in alice_roster] == [alice], alice_roster

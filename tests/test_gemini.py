@@ -44,8 +44,11 @@ async def test_invite_gemini_adds_to_presence(server):
     alice, alice_token = get_token(server, "alice")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # system: alice joined
         await recv_json(ws)  # presence: just alice
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
 
         await ws.send(json.dumps({"type": "chat", "content": "/invite-gemini"}))
 
@@ -64,8 +67,11 @@ async def test_invite_command_not_echoed_as_chat_message(server):
     alice, alice_token = get_token(server, "alice")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # system: joined
         await recv_json(ws)  # presence
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
 
         await ws.send(json.dumps({"type": "chat", "content": "/invite-gemini"}))
         await recv_json(ws)  # system: gemini joined
@@ -85,8 +91,11 @@ async def test_invite_gemini_twice_says_already_in_room(server):
     alice, alice_token = get_token(server, "alice")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # system: joined
         await recv_json(ws)  # presence
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
 
         await ws.send(json.dumps({"type": "chat", "content": "/invite-gemini"}))
         await recv_json(ws)  # system: joined
@@ -103,8 +112,11 @@ async def test_mention_gemini_triggers_a_response(server):
     alice, alice_token = get_token(server, "alice")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # joined
         await recv_json(ws)  # presence
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
         await ws.send(json.dumps({"type": "chat", "content": "/invite-gemini"}))
         await recv_json(ws)  # gemini joined system msg
         await recv_json(ws)  # presence update
@@ -140,8 +152,11 @@ async def test_non_mention_message_does_not_trigger_gemini(server):
     bob, bob_token = get_token(server, "bob")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws_alice:
+        await recv_json(ws_alice)  # self
+        await recv_json(ws_alice)  # block_list
         await recv_json(ws_alice)  # joined
         await recv_json(ws_alice)  # presence
+        await recv_json(ws_alice)  # global_presence (also broadcast at the end of every connect)
         await ws_alice.send(json.dumps({"type": "chat", "content": "/invite-gemini"}))
         await recv_json(ws_alice)  # gemini joined
         await recv_json(ws_alice)  # presence update
@@ -149,11 +164,15 @@ async def test_non_mention_message_does_not_trigger_gemini(server):
         async with websockets.connect(ws_url(server, room, bob_token)) as ws_bob:
             await recv_until(ws_alice, lambda m: m.get("type") == "system")  # bob joined
             await recv_until(ws_alice, lambda m: m.get("type") == "presence")  # presence update
-            # bob's own connection also receives his own join+presence
-            # broadcast (everyone in the room gets it, including himself) -
-            # drain those before checking what comes next on his socket
+            # bob's own connection also receives self/block_list, then his
+            # own join+presence broadcast (everyone in the room gets it,
+            # including himself) - drain those before checking what comes
+            # next on his socket
+            await recv_json(ws_bob)  # self
+            await recv_json(ws_bob)  # block_list
             await recv_json(ws_bob)  # bob joined (his own copy)
             await recv_json(ws_bob)  # presence update (his own copy)
+            await recv_json(ws_bob)  # global_presence (also broadcast at the end of every connect)
 
             await ws_alice.send(json.dumps({"type": "chat", "content": "just a normal message"}))
 
@@ -178,8 +197,11 @@ async def test_mention_without_invite_is_ignored(server):
     alice, alice_token = get_token(server, "alice")
 
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # joined
         await recv_json(ws)  # presence
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
 
         # Gemini was never invited to this room - @gemini should be treated
         # as a completely normal chat message

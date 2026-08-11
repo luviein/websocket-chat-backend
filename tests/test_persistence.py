@@ -19,8 +19,11 @@ async def test_history_replayed_with_missed_messages_header(server):
 
     # first user joins, sends two messages, leaves
     async with websockets.connect(ws_url(server, room, alice_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         await recv_json(ws)  # system: "alice joined the room"
         await recv_json(ws)  # presence snapshot
+        await recv_json(ws)  # global_presence (also broadcast at the end of every connect)
         await ws.send(json.dumps({"type": "chat", "content": "message one"}))
         await recv_json(ws)  # echo of "message one"
         await ws.send(json.dumps({"type": "chat", "content": "message two"}))
@@ -29,6 +32,8 @@ async def test_history_replayed_with_missed_messages_header(server):
     # second user joins later - should receive history + "missed messages" header
     received = []
     async with websockets.connect(ws_url(server, room, bob_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         while True:
             msg = await recv_json(ws)
             received.append(msg)
@@ -48,6 +53,8 @@ async def test_empty_room_skips_missed_messages_header(server):
     empty_room = f"empty-room-{uuid.uuid4().hex[:8]}"
 
     async with websockets.connect(ws_url(server, empty_room, carol_token)) as ws:
+        await recv_json(ws)  # self
+        await recv_json(ws)  # block_list
         first_msg = await recv_json(ws)
 
     assert first_msg == {"type": "system", "content": f"{carol} joined the room"}, (

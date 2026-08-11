@@ -19,6 +19,28 @@ from oauth import GOOGLE_OAUTH_ENABLED, oauth_client
 VALID_STATUSES = {"available", "away", "invisible"}
 DEFAULT_STATUS = "available"
 
+
+def dm_room_id(user_a: str, user_b: str) -> str:
+    """Deterministic room id for a DM between two display names, the same
+    regardless of who initiates - both sides compute the identical id, so a
+    DM is just a regular room under the hood with no separate storage/
+    broadcast machinery needed. Relies on display names never containing
+    ':' (enforced at registration/signup below) so the two names can't be
+    ambiguously re-split apart, and requires the "dm:" prefix be treated as
+    reserved for regular free-text room names."""
+    return "dm:" + ":".join(sorted([user_a, user_b]))
+
+
+def dm_participants(room_id: str) -> tuple[str, str] | None:
+    """Returns the two display names a DM room id encodes, or None if
+    room_id isn't a (well-formed) DM room at all."""
+    if not room_id.startswith("dm:"):
+        return None
+    parts = room_id[len("dm:"):].split(":")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
 # overridable so tests (which all hit the server from 127.0.0.1) aren't
 # throttled by limits meant for real, separate clients
 REGISTER_RATE_LIMIT = os.environ.get("REGISTER_RATE_LIMIT", "5/minute")
@@ -77,17 +99,58 @@ class ConnectionManager:
     def set_status(self, websocket: WebSocket, room_id: str, status: str):
         self.rooms[room_id][websocket]["status"] = status
 
-    async def broadcast(self, message: dict, room_id: str, exclude: WebSocket | None = None):
-        for connection in self.rooms.get(room_id, {}):
+    async def broadcast(
+        self,
+        message: dict,
+        room_id: str,
+        exclude: WebSocket | None = None,
+        skip_usernames: set[str] | None = None,
+    ):
+        for connection, info in self.rooms.get(room_id, {}).items():
             if connection is exclude:
                 continue
+            if skip_usernames and info["username"] in skip_usernames:
+                continue
             await connection.send_json(message)
+
+    def has_connection(self, room_id: str, username: str) -> bool:
+        return any(info["username"] == username for info in self.rooms.get(room_id, {}).values())
+
+    def connections_for_username(self, username: str) -> list[WebSocket]:
+        """Every connection this user currently has open, across all rooms -
+        used to notify them of a new DM on whatever else they're connected
+        to, since they're by definition not in the DM room itself right now."""
+        return [
+            conn
+            for room_conns in self.rooms.values()
+            for conn, info in room_conns.items()
+            if info["username"] == username
+        ]
 
     def invite_gemini(self, room_id: str):
         self.gemini_rooms.add(room_id)
 
     def is_gemini_active(self, room_id: str) -> bool:
         return room_id in self.gemini_rooms
+
+    async def broadcast_global(self, message: dict):
+        """Sends to every connection this server has, in any room - used for
+        the "who's online anywhere" roster, since that's not scoped to a
+        single room the way normal presence is."""
+        for room_conns in self.rooms.values():
+            for conn in room_conns:
+                await conn.send_json(message)
+
+    def global_roster(self) -> list[dict]:
+        """One entry per unique display name across every room/DM someone is
+        currently connected to (a user with two tabs open in different rooms
+        only appears once). Gemini is deliberately excluded - it's per-room
+        bot presence, not a real account you'd look up here to DM."""
+        seen: dict[str, str] = {}
+        for room_conns in self.rooms.values():
+            for info in room_conns.values():
+                seen[info["username"]] = info["status"]
+        return [{"username": username, "status": status} for username, status in seen.items()]
 
     def presence_snapshot(self, room_id: str) -> list[dict]:
         users = [
@@ -121,6 +184,11 @@ def health_check():
 @app.post("/register", response_model=TokenResponse)
 @limiter.limit(REGISTER_RATE_LIMIT)
 def register(request: Request, credentials: UserCredentials):
+    if ":" in credentials.username:
+        # ':' is reserved as the separator inside DM room ids (dm_room_id
+        # above) - allowing it in a username would let two different names
+        # collide into the same encoded DM room, or split apart wrong
+        raise HTTPException(status_code=400, detail="Username cannot contain ':'")
     hashed = auth.hash_password(credentials.password)
     created = database.create_user(credentials.username, hashed)
     if not created:
@@ -209,6 +277,9 @@ def complete_google_signup(request: Request, choice: DisplayNameChoice):
             detail="No pending Google sign-in found - please sign in with Google again.",
         )
 
+    if ":" in choice.display_name:  # see the matching check in register() above
+        raise HTTPException(status_code=400, detail="Display name cannot contain ':'")
+
     created = database.create_google_user(pending["email"], pending["google_id"], choice.display_name)
     if not created:
         raise HTTPException(status_code=400, detail="An account with this email already exists")
@@ -222,6 +293,24 @@ async def broadcast_presence(room_id: str):
     await manager.broadcast(
         {"type": "presence", "users": manager.presence_snapshot(room_id)}, room_id
     )
+
+
+async def broadcast_global_presence():
+    await manager.broadcast_global({"type": "global_presence", "users": manager.global_roster()})
+
+
+async def force_close_dm(room_id: str, target_display_name: str):
+    """Disconnects (only) target_display_name's active connection(s) to a DM
+    room - used right after a block, so an already-open conversation doesn't
+    keep working until the blocked side happens to reconnect on their own.
+    Only the blocked person's side is closed, not the blocker's - they stay
+    in the room free to leave on their own terms."""
+    connections = [
+        conn for conn, info in manager.rooms.get(room_id, {}).items() if info["username"] == target_display_name
+    ]
+    for conn in connections:
+        await conn.send_json({"type": "system", "content": "You can't message this user."})
+        await conn.close(code=1008)
 
 
 @app.websocket("/ws/{room_id}")
@@ -238,7 +327,34 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
     # every message/presence entry/join notice.
     display_name = database.get_display_name(account_id)
 
+    # a "dm:" room id encodes exactly the two people allowed in it - reject
+    # anyone else (or a malformed dm: id) before ever accepting the socket,
+    # same as the bad-token case above
+    participants = dm_participants(room_id)
+    if participants is not None:
+        if display_name not in participants:
+            await websocket.close(code=1008)
+            return
+        other = participants[1] if participants[0] == display_name else participants[0]
+        if database.is_blocked_pair(display_name, other):
+            # closed pre-accept (no message) same as the "not a participant"
+            # case above - lets the client tell "rejected" apart from "the
+            # DM briefly opened" just from whether onopen ever fired, so it
+            # can show a quick popup instead of navigating into an empty
+            # DM view first
+            await websocket.close(code=1008)
+            return
+
     await manager.connect(websocket, room_id, display_name)
+
+    # lets the client know its own display name (needed to build DM room ids
+    # and to exclude itself from Message/Block buttons in the presence
+    # grid), and its current block list (to show Block vs. Unblock). No
+    # explicit early global_presence send here (unlike self/block_list) -
+    # broadcast_global_presence() below already reaches this connection too,
+    # same as how room-scoped "presence" only ever arrives via its broadcast.
+    await websocket.send_json({"type": "self", "username": display_name})
+    await websocket.send_json({"type": "block_list", "blocked": database.get_blocked_users(display_name)})
 
     # send this room's recent history to the newly connected client only
     history = database.get_recent_messages(room_id)
@@ -251,6 +367,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
     await manager.broadcast({"type": "system", "content": f"{display_name} joined the room"}, room_id)
     await broadcast_presence(room_id)
+    await broadcast_global_presence()
 
     try:
         while True:
@@ -279,9 +396,31 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
                     continue  # don't save/broadcast the command as a normal chat message
 
                 database.save_message(room_id, display_name, content)
+                # withhold this message from anyone who has blocked the
+                # sender - silently, same as Discord: the sender isn't
+                # restricted or notified in any way, they just don't know
+                # that specific person no longer sees their messages. Never
+                # affects the sender's own copy (you can't block yourself).
+                blockers = set(database.get_blockers_of(display_name))
                 await manager.broadcast(
-                    {"type": "chat", "username": display_name, "content": content}, room_id
+                    {"type": "chat", "username": display_name, "content": content},
+                    room_id,
+                    skip_usernames=blockers,
                 )
+
+                # if this is a DM and the other person isn't actively looking
+                # at it right now, they'd otherwise never know a message
+                # arrived - nudge them on whatever else they're connected to
+                dm_participants_here = dm_participants(room_id)
+                if dm_participants_here is not None:
+                    other = (
+                        dm_participants_here[1]
+                        if dm_participants_here[0] == display_name
+                        else dm_participants_here[0]
+                    )
+                    if not manager.has_connection(room_id, other):
+                        for conn in manager.connections_for_username(other):
+                            await conn.send_json({"type": "dm_notification", "from": display_name})
 
                 if manager.is_gemini_active(room_id) and content.strip().lower().startswith(
                     gemini.MENTION_PREFIX
@@ -312,9 +451,28 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
                 if status in VALID_STATUSES:
                     manager.set_status(websocket, room_id, status)
                     await broadcast_presence(room_id)
+                    await broadcast_global_presence()
+
+            elif msg_type == "block":
+                target = data.get("username", "")
+                if target and target != display_name:
+                    database.block_user(display_name, target)
+                    await force_close_dm(dm_room_id(display_name, target), target)
+                    await websocket.send_json(
+                        {"type": "block_list", "blocked": database.get_blocked_users(display_name)}
+                    )
+
+            elif msg_type == "unblock":
+                target = data.get("username", "")
+                if target:
+                    database.unblock_user(display_name, target)
+                    await websocket.send_json(
+                        {"type": "block_list", "blocked": database.get_blocked_users(display_name)}
+                    )
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
         await manager.broadcast({"type": "system", "content": f"{display_name} left the room"}, room_id)
         if room_id in manager.rooms:
             await broadcast_presence(room_id)
+        await broadcast_global_presence()

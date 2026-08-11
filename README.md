@@ -146,6 +146,71 @@ Optional, same graceful-fallback pattern as Google OAuth - without a key,
   loop (on a worker thread) - a slow or failed call can't freeze the rest of
   the server for other connections.
 
+### Direct Messages & Blocking
+
+A DM is just a regular room under the hood - `dm_room_id()` in `main.py`
+computes a deterministic room id from the two participants' display names
+(`dm:alice:bob`, always sorted so it's the same id no matter who initiates),
+so DMs reuse the exact same connect/broadcast/persistence/presence code path
+as a normal room, with no separate storage.
+
+**Usage:** click **Message** next to someone in the "Online Now" grid (of any
+room you already share with them) to open a private DM with just the two of
+you - the header shows "DM with X" instead of "Room: X", and a **Back**
+button appears to return to the room you came from. Click **Block** to stop
+that person from DMing you: it immediately disconnects them if a DM is
+already open (your own connection stays up, with a "You can't message this
+user." notice sent to the one being kicked), and any future attempt by
+either of you to open that DM is rejected before the connection even opens -
+the client shows this as a quick popup instead of navigating into an empty
+DM view first. **Unblock** reverses it.
+
+Blocking is Discord-style, not mutual: it's a one-way filter on what *you*
+see, invisible to the other side.
+- **DMs**: neither side can start or continue a DM once either has blocked
+  the other (this direction has to be mutual - a DM only has two people, so
+  there's no "half-open" state that makes sense).
+- **Shared group rooms**: blocking someone does *not* remove them from the
+  room, hide their presence, or stop them from posting - it only makes the
+  *blocker's* client stop receiving that person's `chat` messages (filtered
+  server-side per-recipient in the broadcast). The blocked user keeps
+  chatting normally, unaware anything changed, and everyone else in the room
+  who hasn't blocked them still sees everything as usual.
+
+The `dm:` prefix is reserved and can't be used as a free-text room name (the
+client blocks it; the server would otherwise misinterpret it as a DM room
+id). This only works because display names are required to be unique across
+*all* accounts - both password usernames and Google-chosen display names
+share one namespace (enforced in `database.py`'s `create_user`/
+`create_google_user`) - otherwise two different people could collide into
+the same DM room or block target.
+
+### "Online Now" (account-wide) & DM Notifications
+
+There's a single, collapsible "Online Now" panel, but what it shows depends
+on where you are: inside a DM it's just the two of you (room-scoped
+presence, like any normal room); everywhere else it's *every* display name
+connected anywhere on the server right now (any room, any DM) - not just
+people who happen to share your current room - so you can Message or Block
+someone you've never been in a room with. This account-wide view updates
+live off the same single WebSocket connection you're already using for
+whatever room you're in; `ConnectionManager.broadcast_global()` in `main.py`
+fans a `global_presence` snapshot out to literally every open connection
+whenever anyone connects, disconnects, or changes status anywhere. (Gemini
+is excluded from that snapshot - it's per-room bot presence, not a real
+DM-able account - but the client still shows it here when it's active in
+your current room, sourced from the normal room-scoped presence data.)
+
+If someone DMs you while you're not actively looking at that DM, you'd
+otherwise never know - `main.py` checks `manager.has_connection()` for the
+DM room and, if you're not there, pushes a `dm_notification` to whatever
+else you're connected to. The client shows this as a dismissible popup
+("New message from X - click to open") *and* a small red dot next to that
+person in the "Online Now" panel, so it's not just a fire-and-forget toast
+you can miss - the dot persists until you actually open the DM (clicking
+the toast, the red-dot entry, or its Message button all clear it the same
+way, via `startDM()`).
+
 ## Message Protocol
 
 All WebSocket messages are JSON. Client -> server:
@@ -154,6 +219,8 @@ All WebSocket messages are JSON. Client -> server:
 {"type": "chat", "content": "hello"}
 {"type": "set_status", "status": "available" | "away" | "invisible"}
 {"type": "typing"}
+{"type": "block", "username": "..."}
+{"type": "unblock", "username": "..."}
 ```
 
 Server -> client:
@@ -164,6 +231,10 @@ Server -> client:
 {"type": "presence", "users": [{"username": "...", "status": "..."}]}
 {"type": "typing", "username": "..."}
 {"type": "gemini_typing"}
+{"type": "self", "username": "..."}
+{"type": "block_list", "blocked": ["..."]}
+{"type": "dm_notification", "from": "..."}
+{"type": "global_presence", "users": [{"username": "...", "status": "..."}]}
 ```
 
 Every `username` field here is the resolved **display name** (see the Google
@@ -182,6 +253,25 @@ chat message shows up). `gemini_typing` is broadcast right before the
 (possibly 30s-long) Gemini API call starts, so the room sees "Gemini is
 typing..." instead of a silent gap; it's cleared once Gemini's `chat` reply
 arrives.
+
+`self`, `block_list`, and `global_presence` are all sent once, right after
+connecting to any room - `self` tells the client its own resolved display
+name (needed to compute DM room ids and to hide Message/Block buttons on
+itself), `block_list` is the current user's full block list (to render Block
+vs. Unblock), `global_presence` is the initial "Online Everywhere" snapshot.
+`block_list` is re-sent after every `block`/`unblock`, and `global_presence`
+is re-broadcast to *every* connected client (not just the one room) whenever
+anyone connects, disconnects, or changes status anywhere - both so the
+client's state stays in sync with the server rather than updating
+optimistically client-side.
+
+`dm_notification` is sent to a DM recipient's *other* active connections
+(whatever room/DM they're actually looking at) whenever they get a new DM
+they're not currently viewing live - otherwise a DM sent while the recipient
+is elsewhere would just silently vanish into a room they haven't opened. The
+client shows it as a dismissible popup that jumps straight into that DM, and
+marks a red dot on that person in the "Online Everywhere" list until it's
+opened.
 
 ## Tests
 
@@ -228,6 +318,10 @@ outside CI's exact invocation.
 - "Logout" is client-side only (clears the local token). JWTs can't be
   revoked without a token blocklist, so a leaked token stays valid until it
   expires (24h) regardless of logging out.
+- Blocking doesn't retroactively filter chat history - if you block someone
+  after they've already posted in a room, their past messages you already
+  received (or that get replayed from history on a future join) aren't
+  hidden, only their *new* messages going forward.
 
 ## Roadmap
 
@@ -240,7 +334,7 @@ outside CI's exact invocation.
 - [x] Google OAuth login, alongside the existing password-based accounts
 - [x] AI bot: `/invite-gemini` + `@gemini` mentions, backed by the Gemini API
 - [x] Typing indicators: "X is typing..." for users, "Gemini is typing..." while an AI reply is in flight
-- [ ] Stretch: private DMs
+- [x] Private DMs, plus the ability to block a user (see Direct Messages & Blocking above)
 
 <img width="984" height="865" alt="image" src="https://github.com/user-attachments/assets/86967f43-cea6-4e3c-8f27-28dc5d51f0a1" />
 

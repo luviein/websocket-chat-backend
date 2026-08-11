@@ -27,9 +27,19 @@ TEST_PORT = 8123
 BASE_URL = f"http://localhost:{TEST_PORT}"
 
 
-def _wait_for_server(timeout: float = 15.0) -> bool:
+def _wait_for_server(proc: subprocess.Popen, timeout: float = 15.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        # Check this BEFORE the URL request, not just as a final fallback -
+        # learned the hard way that a stale/orphaned process (Windows has
+        # repeatedly failed to actually kill a previous session's uvicorn
+        # child via proc.terminate(), leaving it squatting on TEST_PORT)
+        # can still answer the URL check even though *our* subprocess
+        # failed to bind and already exited. Without this, tests silently
+        # ran against stale pre-fix server code while still reporting a
+        # normal "server started" success.
+        if proc.poll() is not None:
+            return False
         try:
             requests.get(BASE_URL, timeout=1)
             return True
@@ -75,10 +85,17 @@ def server(tmp_path_factory):
         text=True,
     )
 
-    if not _wait_for_server():
-        proc.terminate()
+    if not _wait_for_server(proc):
+        if proc.poll() is None:
+            proc.terminate()
         out, err = proc.communicate(timeout=5)
-        raise RuntimeError(f"Server failed to start.\nstdout:\n{out}\nstderr:\n{err}")
+        raise RuntimeError(
+            f"Server failed to start (exit code {proc.returncode}).\n"
+            f"If this mentions the port already being in use, a previous test "
+            f"run's server process didn't shut down - find and kill whatever "
+            f"is listening on port {TEST_PORT} and retry.\n"
+            f"stdout:\n{out}\nstderr:\n{err}"
+        )
 
     yield BASE_URL
 

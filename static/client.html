@@ -357,20 +357,60 @@
         #userGrid {
             flex: 1;
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
             gap: 0.5rem;
             align-content: flex-start;
         }
 
-        .user-chip {
+        .panel-title-row {
             display: flex;
             align-items: center;
-            gap: 0.4rem;
+            justify-content: space-between;
+            margin: 0 0 0.75rem;
+        }
+
+        .panel-title-row .panel-title {
+            margin: 0;
+        }
+
+        .collapse-toggle {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 0.1rem 0.4rem;
+            transition: transform 0.15s ease;
+        }
+
+        .collapse-toggle:hover {
+            color: var(--text);
+        }
+
+        .collapse-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        #presenceCollapsible.collapsed {
+            display: none;
+        }
+
+        .user-chip {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
             padding: 0.4rem 0.55rem;
             background: var(--bg);
             border: 1px solid var(--border);
             border-radius: 7px;
             font-size: 0.8rem;
+            overflow: hidden;
+        }
+
+        .user-chip-main {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
             overflow: hidden;
         }
 
@@ -391,13 +431,110 @@
             text-overflow: ellipsis;
         }
 
+        .user-chip-actions {
+            display: flex;
+            gap: 0.3rem;
+        }
+
+        .chip-btn {
+            flex: 1;
+            font-size: 0.68rem;
+            padding: 0.2rem 0.35rem;
+            border-radius: 5px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+        }
+
+        .chip-btn:hover {
+            background: var(--system-bg);
+            color: var(--text);
+        }
+
+        .chip-btn.blocked {
+            color: #c0392b;
+            border-color: #c0392b;
+        }
+
         .empty-grid {
             color: var(--muted);
             font-size: 0.8rem;
         }
+
+        /* toast: popup for feedback that shouldn't navigate the user
+           anywhere on its own (e.g. a DM notification, or a DM attempt
+           getting rejected) - stays up until explicitly dismissed */
+        #toast {
+            position: fixed;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(-8px);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--text);
+            color: var(--panel);
+            padding: 0.55rem 0.5rem 0.55rem 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            /* tied to .visible, NOT .clickable - otherwise a toast that had
+               just faded out stayed clickable/hoverable (invisible but
+               still intercepting clicks) since opacity alone doesn't affect
+               pointer-events */
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 1000;
+            max-width: 90vw;
+        }
+
+        #toast.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+        }
+
+        #toast.clickable #toastMessage {
+            cursor: pointer;
+        }
+
+        #toast.clickable #toastMessage:hover {
+            text-decoration: underline;
+        }
+
+        .toast-close {
+            background: transparent;
+            border: none;
+            color: inherit;
+            font-size: 1.05rem;
+            line-height: 1;
+            padding: 0.15rem 0.4rem;
+            border-radius: 5px;
+            cursor: pointer;
+            opacity: 0.75;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .unread-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background: #e03131;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
+    <div id="toast">
+        <span id="toastMessage"></span>
+        <button id="toastClose" class="toast-close" aria-label="Dismiss">&times;</button>
+    </div>
     <div class="app">
         <div>
             <h1>Chat Client</h1>
@@ -452,28 +589,35 @@
             <!-- View 3: Chat Room -->
             <div class="view hidden" id="chatView" style="display: flex; flex-direction: column; gap: 1rem;">
                 <div class="panel chat-header">
-                    <span class="room-name">Room: <span id="currentRoomLabel"></span></span>
+                    <span class="room-name" id="currentRoomLabel"></span>
                     <div class="actions">
+                        <button class="secondary hidden" id="backBtn" onclick="goBack()">Back</button>
                         <button class="secondary" onclick="changeRoom()">Change Room</button>
                         <button class="secondary" onclick="logout()">Log Out</button>
                     </div>
                 </div>
 
                 <div class="panel">
-                    <p class="panel-title">Online Now</p>
-                    <div class="presence-layout">
-                        <div class="status-picker">
-                            <button class="status-option" data-status="available" onclick="setStatus('available')">
-                                <span class="dot-btn"></span> Available
-                            </button>
-                            <button class="status-option" data-status="away" onclick="setStatus('away')">
-                                <span class="dot-btn"></span> Away
-                            </button>
-                            <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
-                                <span class="dot-btn"></span> Invisible
-                            </button>
+                    <div class="panel-title-row">
+                        <p class="panel-title" id="presenceTitle">Online Now</p>
+                        <button class="collapse-toggle" id="presenceCollapseToggle" onclick="togglePresenceCollapse()" aria-label="Toggle online list">&#9662;</button>
+                    </div>
+                    <div id="presenceCollapsible">
+                        <p class="status" id="presenceHint" style="margin: 0 0 0.6rem;"></p>
+                        <div class="presence-layout">
+                            <div class="status-picker">
+                                <button class="status-option" data-status="available" onclick="setStatus('available')">
+                                    <span class="dot-btn"></span> Available
+                                </button>
+                                <button class="status-option" data-status="away" onclick="setStatus('away')">
+                                    <span class="dot-btn"></span> Away
+                                </button>
+                                <button class="status-option" data-status="invisible" onclick="setStatus('invisible')">
+                                    <span class="dot-btn"></span> Invisible
+                                </button>
+                            </div>
+                            <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
                         </div>
-                        <div id="userGrid"><span class="empty-grid">No one here yet.</span></div>
                     </div>
                 </div>
 
@@ -572,25 +716,133 @@
             showView("room");
         }
 
+        // account-wide (not room-scoped) identity/state, populated from the
+        // server right after connecting to ANY room - needed to build DM
+        // room ids and to know which Block/Unblock label to show
+        let myUsername = null;
+        let blockedUsers = new Set();
+        let lastPresenceUsers = [];
+        let lastGlobalUsers = [];
+        let unreadDmFrom = new Set(); // display names with an unread DM pending
+
+        // which room we're actually connected to right now, and (only while
+        // inside a DM reached via "Message") the room to return to on "Back"
+        let currentRoomId = null;
+        let previousRoom = null; // {id, label} | null
+
+        function dmRoomId(a, b) {
+            // must match dm_room_id() in main.py exactly
+            return "dm:" + [a, b].sort().join(":");
+        }
+
+        function isInDM() {
+            return !!(currentRoomId && currentRoomId.startsWith("dm:"));
+        }
+
+        function togglePresenceCollapse() {
+            const collapsed = document.getElementById("presenceCollapsible").classList.toggle("collapsed");
+            document.getElementById("presenceCollapseToggle").classList.toggle("collapsed", collapsed);
+        }
+
+        const toastEl = document.getElementById("toast");
+        const toastMessageEl = document.getElementById("toastMessage");
+
+        function showToast(message, onClick) {
+            toastMessageEl.textContent = message;
+            toastEl.classList.toggle("clickable", !!onClick);
+            // clicking the message also dismisses the toast - once you've
+            // acted on it, it's served its purpose
+            toastMessageEl.onclick = onClick ? () => { hideToast(); onClick(); } : null;
+            toastEl.classList.add("visible");
+        }
+
+        function hideToast() {
+            toastEl.classList.remove("visible", "clickable");
+            toastMessageEl.onclick = null;
+        }
+
+        document.getElementById("toastClose").addEventListener("click", hideToast);
+
         function connect() {
-            // guards against the double/triple-click case where a second
-            // click fires before the first WebSocket has finished opening,
-            // which used to open extra duplicate connections for the same user
-            if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+            const room = document.getElementById("room").value.trim();
+            if (room.startsWith("dm:")) {
+                const connectStatus = document.getElementById("connectStatus");
+                connectStatus.textContent = 'Room names can\'t start with "dm:" - that\'s reserved for direct messages.';
+                connectStatus.className = "status error";
                 return;
             }
+            connectToRoom(room, `Room: ${room}`);
+        }
+
+        function startDM(otherUsername) {
+            if (!myUsername || otherUsername === myUsername) return;
+            // opening (or re-opening) a DM acknowledges it - clear their
+            // unread dot in the global list right away, however we got here
+            // (Message button, clicking a red dot, or the toast)
+            if (unreadDmFrom.delete(otherUsername)) {
+                renderPresencePanel();
+            }
+            // remember where we came from so "Back" can return to it - but
+            // if we're already in a DM (e.g. re-clicking Message on the same
+            // person), keep whatever "back" destination we already had
+            // instead of overwriting it with the DM room itself
+            if (currentRoomId && !currentRoomId.startsWith("dm:")) {
+                previousRoom = { id: currentRoomId, label: document.getElementById("currentRoomLabel").textContent };
+            }
+            connectToRoom(dmRoomId(myUsername, otherUsername), `DM with ${otherUsername}`, {
+                // a block rejects the connection before it ever opens (see
+                // main.py) - show a quick popup instead of navigating into
+                // an empty DM view just to immediately bounce back out
+                onRejected: () => showToast("You can't message this user."),
+            });
+        }
+
+        function goBack() {
+            if (!previousRoom) return;
+            const target = previousRoom;
+            previousRoom = null;
+            connectToRoom(target.id, target.label);
+        }
+
+        function toggleBlock(otherUsername) {
+            if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+            const type = blockedUsers.has(otherUsername) ? "unblock" : "block";
+            ws.send(JSON.stringify({ type, username: otherUsername }));
+        }
+
+        let isConnecting = false;
+
+        function connectToRoom(roomId, label, options = {}) {
+            // guards against the double/triple-click case where a second
+            // click fires before the first WebSocket has finished opening,
+            // which used to open extra duplicate connections for the same
+            // user. Tracked separately from ws.readyState - checking that
+            // instead would also (wrongly) block switching rooms/starting a
+            // DM while already connected elsewhere, since that ws stays
+            // "OPEN" throughout this whole attempt (see oldWs below).
+            if (isConnecting) {
+                return;
+            }
+            isConnecting = true;
+
+            // keep the CURRENT connection alive until the new one actually
+            // succeeds, instead of closing it upfront - closing it eagerly
+            // meant a rejected attempt (e.g. trying to DM someone who
+            // blocked you) silently dropped you from the room you were
+            // already in, with no way back and no visible error
+            const oldWs = ws;
 
             const connectBtn = document.getElementById("connectBtn");
             const connectStatus = document.getElementById("connectStatus");
-            const room = document.getElementById("room").value;
 
             connectBtn.disabled = true;
             connectStatus.textContent = "Connecting...";
             connectStatus.className = "status";
 
-            ws = new WebSocket(`${WS_BASE}/ws/${room}?token=${token}`);
+            let opened = false; // did THIS attempt ever actually connect?
+            const newWs = new WebSocket(`${WS_BASE}/ws/${roomId}?token=${token}`);
 
-            ws.onmessage = (event) => {
+            newWs.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 if (msg.type === "chat") {
                     addChatMessage(msg.username, msg.content);
@@ -602,28 +854,79 @@
                 } else if (msg.type === "system") {
                     addMessage(msg.content, true);
                 } else if (msg.type === "presence") {
-                    renderUserGrid(msg.users);
+                    lastPresenceUsers = msg.users;
+                    renderPresencePanel();
                 } else if (msg.type === "typing") {
                     showUserTyping(msg.username);
                 } else if (msg.type === "gemini_typing") {
                     showGeminiTyping();
+                } else if (msg.type === "self") {
+                    myUsername = msg.username;
+                } else if (msg.type === "block_list") {
+                    blockedUsers = new Set(msg.blocked);
+                    renderPresencePanel(); // refresh Block/Unblock labels
+                } else if (msg.type === "global_presence") {
+                    lastGlobalUsers = msg.users;
+                    renderPresencePanel();
+                } else if (msg.type === "dm_notification") {
+                    // only sent when we're NOT already looking at that DM
+                    // (see main.py) - clicking it jumps straight there.
+                    // Also marks a red dot on them in the presence panel,
+                    // which sticks around even if the toast gets
+                    // missed/dismissed.
+                    unreadDmFrom.add(msg.from);
+                    renderPresencePanel();
+                    showToast(`New message from ${msg.from} - click to open`, () => startDM(msg.from));
                 }
             };
 
-            ws.onopen = () => {
+            newWs.onopen = () => {
+                opened = true;
+                isConnecting = false;
                 connectBtn.disabled = false; // reset for next time this view is shown
-                document.getElementById("currentRoomLabel").textContent = room;
+                if (oldWs) {
+                    // the switch succeeded - NOW it's safe to drop the old one
+                    oldWs.onclose = null;
+                    oldWs.close();
+                }
+                ws = newWs;
+                currentRoomId = roomId;
+                // the old room's roster is no longer relevant - clear it so
+                // the panel doesn't flash stale data before the new room's
+                // own "presence" message arrives a moment later
+                lastPresenceUsers = [];
+                document.getElementById("currentRoomLabel").textContent = label;
+                document.getElementById("backBtn").classList.toggle("hidden", !previousRoom);
                 document.getElementById("messages").innerHTML = "";
                 resetTypingState();
+                renderPresencePanel(); // reflect the new room's context (DM vs. global) right away
                 showView("chat");
                 setStatus(myStatus); // announce current status once connected
             };
 
-            ws.onclose = () => {
+            newWs.onclose = () => {
+                isConnecting = false;
                 connectBtn.disabled = false;
+                if (!opened) {
+                    // this attempt never succeeded - oldWs (if any) was never
+                    // touched, so whatever connection was already active is
+                    // still exactly as it was
+                    if (options.onRejected) {
+                        options.onRejected();
+                    } else {
+                        connectStatus.textContent = "Disconnected.";
+                        connectStatus.className = "status error";
+                    }
+                    return;
+                }
+                // the connection that WAS active (this one - ws === newWs by
+                // now) just dropped for real
+                ws = null;
                 connectStatus.textContent = "Disconnected.";
                 connectStatus.className = "status error";
-                renderUserGrid([]);
+                lastPresenceUsers = [];
+                lastGlobalUsers = [];
+                renderPresencePanel();
                 resetTypingState();
             };
         }
@@ -634,6 +937,9 @@
                 ws.close();
                 ws = null;
             }
+            currentRoomId = null;
+            previousRoom = null;
+            document.getElementById("backBtn").classList.add("hidden");
             document.getElementById("connectStatus").textContent = "";
             resetTypingState();
             showView("room");
@@ -646,6 +952,15 @@
                 ws = null;
             }
             token = null;
+            myUsername = null;
+            blockedUsers = new Set();
+            lastPresenceUsers = [];
+            lastGlobalUsers = [];
+            unreadDmFrom = new Set();
+            currentRoomId = null;
+            previousRoom = null;
+            hideToast();
+            document.getElementById("backBtn").classList.add("hidden");
             document.getElementById("authPassword").value = "";
             document.getElementById("authStatus").textContent = "";
             document.getElementById("authStatus").className = "status";
@@ -688,7 +1003,84 @@
             messages.scrollTop = messages.scrollHeight;
         }
 
-        function renderUserGrid(users) {
+        // used by the single "Online Now" panel, whether it's currently
+        // showing room-scoped or account-wide users (see
+        // renderPresencePanel) - built via createElement + addEventListener
+        // (not inline onclick strings) so a username never needs escaping
+        // into HTML/JS
+        function buildUserChip(user, { includeUnreadDot = false } = {}) {
+            const chip = document.createElement("div");
+            chip.className = "user-chip";
+
+            const main = document.createElement("div");
+            main.className = "user-chip-main";
+
+            const dot = document.createElement("span");
+            dot.className = `dot ${user.status}`;
+            main.appendChild(dot);
+
+            const name = document.createElement("span");
+            name.className = "name";
+            name.textContent = user.username; // textContent, not innerHTML - usernames are user-controlled input
+            main.appendChild(name);
+
+            if (includeUnreadDot && unreadDmFrom.has(user.username)) {
+                const unread = document.createElement("span");
+                unread.className = "unread-dot";
+                unread.title = "New DM";
+                main.appendChild(unread);
+            }
+
+            chip.appendChild(main);
+
+            // no Message/Block controls for yourself or the bot
+            const isSelf = user.username === myUsername;
+            const isBot = user.username === GEMINI_BOT_NAME;
+            if (!isSelf && !isBot) {
+                const actions = document.createElement("div");
+                actions.className = "user-chip-actions";
+
+                const dmBtn = document.createElement("button");
+                dmBtn.className = "chip-btn";
+                dmBtn.textContent = "Message";
+                dmBtn.addEventListener("click", () => startDM(user.username));
+                actions.appendChild(dmBtn);
+
+                const isBlocked = blockedUsers.has(user.username);
+                const blockBtn = document.createElement("button");
+                blockBtn.className = isBlocked ? "chip-btn blocked" : "chip-btn";
+                blockBtn.textContent = isBlocked ? "Unblock" : "Block";
+                blockBtn.addEventListener("click", () => toggleBlock(user.username));
+                actions.appendChild(blockBtn);
+
+                chip.appendChild(actions);
+            }
+
+            return chip;
+        }
+
+        // one "Online Now" panel, context-aware instead of two separate
+        // lists: inside a DM it's just the two participants (room-scoped
+        // presence); everywhere else it's the account-wide roster (anyone
+        // connected, in any room/DM), so you can Message/Block someone you
+        // don't currently share a room with
+        function renderPresencePanel() {
+            document.getElementById("presenceTitle").textContent = isInDM() ? "Online Now" : "Online Now (Everywhere)";
+            document.getElementById("presenceHint").innerHTML = isInDM()
+                ? "Click <code>Block</code> to stop this person from DMing you."
+                : 'Click <code>Message</code> on someone to start a private DM, or <code>Block</code> to stop them from DMing you. A <span class="unread-dot" style="display: inline-block; vertical-align: middle;"></span> means they\'ve sent you a DM you haven\'t opened yet.';
+
+            let users;
+            if (isInDM()) {
+                users = lastPresenceUsers;
+            } else {
+                // the global roster deliberately excludes Gemini (not a
+                // real DM-able account) - but if it's active in THIS room,
+                // still show it here, sourced from the room-scoped snapshot
+                const geminiHere = lastPresenceUsers.find((u) => u.username === GEMINI_BOT_NAME);
+                users = geminiHere ? [...lastGlobalUsers, geminiHere] : lastGlobalUsers;
+            }
+
             const grid = document.getElementById("userGrid");
             grid.innerHTML = "";
             if (!users.length) {
@@ -696,19 +1088,7 @@
                 return;
             }
             for (const user of users) {
-                const chip = document.createElement("div");
-                chip.className = "user-chip";
-
-                const dot = document.createElement("span");
-                dot.className = `dot ${user.status}`;
-
-                const name = document.createElement("span");
-                name.className = "name";
-                name.textContent = user.username; // textContent, not innerHTML - usernames are user-controlled input
-
-                chip.appendChild(dot);
-                chip.appendChild(name);
-                grid.appendChild(chip);
+                grid.appendChild(buildUserChip(user, { includeUnreadDot: true }));
             }
         }
 
