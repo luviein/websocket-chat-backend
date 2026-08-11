@@ -9,4 +9,4 @@ slowapi
 authlib
 httpx
 itsdangerous
-google-genai
+google-genai==2.17.0
