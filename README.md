@@ -126,6 +126,37 @@ Optional, same graceful-fallback pattern as Google OAuth - without a key,
    a fixed model version.
 3. Restart the server.
 
+## Deploy (Render free tier)
+
+`render.yaml` in the repo root is a [Render Blueprint](https://render.com/docs/blueprint-spec) -
+it defines the whole service (build command, start command, env vars) so Render
+can set it up from the repo in one step instead of manual dashboard config.
+
+1. Push this repo to GitHub (already done if you're reading this from there).
+2. In the [Render dashboard](https://dashboard.render.com/), click **New >
+   Blueprint** and pick this repo. Render reads `render.yaml` and provisions a
+   free web service from it. `JWT_SECRET_KEY` is auto-generated; leave
+   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GEMINI_API_KEY` blank if you're
+   not using those features.
+3. If you want Google OAuth working in production, add a second **Authorized
+   redirect URI** in the Google Cloud Console credential from the OAuth
+   section above:
+   ```
+   https://your-service-name.onrender.com/auth/google/callback
+   ```
+   then set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` as env vars on the
+   Render service (dashboard > Environment) and it'll redeploy.
+4. If you want the Gemini bot working, set `GEMINI_API_KEY` the same way.
+
+Two limits worth knowing about on the free tier:
+
+- **No persistent disk** - `chat.db` (SQLite) resets on every deploy and on
+  every restart after 15 minutes of inactivity. Fine for a portfolio demo,
+  not for real data.
+- **Spins down when idle** - the service sleeps after ~15 minutes with no
+  requests and takes 30-60s to wake on the next one, dropping any open
+  WebSocket connections in the meantime.
+
 **Usage, from any chat room:**
 - Type `/invite-gemini` to add it to the room - it shows up in the "Online
   Now" grid like any other participant, and everyone in the room sees a
