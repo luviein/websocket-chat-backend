@@ -48,7 +48,7 @@ Server runs at `http://localhost:8000`.
 
 ## Try it
 
-Open [http://localhost:8000/client.html](http://localhost:8000/client.html) (the server now serves it directly - required for Google OAuth's redirect to work; opening the file directly still works fine for username/password login). Register/log in, enter a room name and connect from two tabs using the **same room**, and chat between them. Tabs using a *different* room won't see those messages.
+Open [http://localhost:8000](http://localhost:8000) (also available at `/client.html` - the server serves it directly, required for Google OAuth's redirect to work; opening the file directly still works fine for username/password login). Register/log in, enter a room name and connect from two tabs using the **same room**, and chat between them. Tabs using a *different* room won't see those messages.
 
 ## Auth
 

@@ -176,9 +176,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-@app.get("/")
+@app.get("/health")
 def health_check():
     return {"status": "chat backend running"}
+
+
+@app.get("/")
+def serve_root():
+    return FileResponse(Path(__file__).parent / "static" / "client.html")
 
 
 @app.post("/register", response_model=TokenResponse)
